@@ -3,6 +3,7 @@ import { promisify } from 'util';
 import fs from 'fs';
 import path from 'path';
 import { getProxy, COOKIES_PATH, YT_DLP_LOCAL } from '../config';
+import { refreshBrowserCookies } from './browserCookies';
 import type { PlaylistProbeResult, PlaylistEntry, YtDlpVersionInfo } from '../types';
 
 const execFileP = promisify(execFile);
@@ -78,6 +79,7 @@ export function netHint(msg: string): string {
 }
 
 export async function fetchPlaylistEntries(url: string): Promise<PlaylistProbeResult> {
+  await refreshBrowserCookies(url);
   const { stdout } = await execFileP(ytDlpBin(), [
     '-J', '--flat-playlist', '--no-warnings', ...ytNetArgs(), normalizeUrl(url),
   ], { timeout: 60000, maxBuffer: 50 * 1024 * 1024 });
@@ -100,6 +102,7 @@ export async function fetchPlaylistEntries(url: string): Promise<PlaylistProbeRe
 }
 
 export async function fetchMeta(url: string): Promise<{ title: string; uploader?: string; thumbUrl?: string }> {
+  await refreshBrowserCookies(url);
   const { stdout } = await execFileP(ytDlpBin(), [
     '-J', '--no-playlist', '--no-warnings', ...ytNetArgs(), normalizeUrl(url),
   ], { timeout: 30000, maxBuffer: 10 * 1024 * 1024 });
