@@ -71,10 +71,22 @@ function ytNet() {
 }
 // Append a hint when an error looks like a network/ISP block (reset/refused/etc.).
 function netHint(msg) {
-  return /reset by peer|errno 104|connection refused|timed out|network is unreachable|getaddrinfo|failed to resolve/i.test(msg || '')
-    ? msg + (PROXY ? ' — even via the configured proxy. Check the proxy can reach this site.'
-                   : ' — this site looks blocked on the server’s network. Set SV_PROXY to a VPN/proxy and retry.')
-    : msg;
+  const s = msg || ‘’;
+  if (/sign.?in|log.?in required|age.?verif|members.?only|premium|private video|not available|account required/i.test(s))
+    return s + ‘ — This video may require authentication. Drop a cookies.txt (Netscape format) next to server.js and retry.’;
+  if (/reset by peer|errno 104|connection refused|timed out|network is unreachable|getaddrinfo|failed to resolve/i.test(s))
+    return s + (PROXY ? ‘ — even via the configured proxy. Check the proxy can reach this site.’
+                      : ‘ — this site looks blocked on the server\’s network. Set SV_PROXY to a VPN/proxy and retry.’);
+  return s;
+}
+
+// Decode HTML entities that some extractors (e.g. PornHub) leave in titles.
+function decodeHtml(s) {
+  return String(s || ‘’)
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCharCode(parseInt(h, 16)))
+    .replace(/&amp;/g, ‘&’).replace(/&lt;/g, ‘<’).replace(/&gt;/g, ‘>’)
+    .replace(/&quot;/g, ‘"’).replace(/&apos;/g, "’");
 }
 
 function safePath(rel) {
@@ -409,13 +421,13 @@ function fetchPlaylistEntries(url) {
             return {
               index: e.playlist_index || (i + 1),
               id: e.id || '',
-              title: e.title || ('Item ' + (i + 1)),
+              title: decodeHtml(e.title) || ('Item ' + (i + 1)),
               duration: Math.round(e.duration || 0),
               url: (e.url && /^https?:/i.test(e.url)) ? e.url : '',
               thumb
             };
           });
-          resolve({ title: j.title || j.playlist_title || 'Playlist', count: entries.length, entries });
+          resolve({ title: decodeHtml(j.title || j.playlist_title || 'Playlist'), count: entries.length, entries });
         } catch { resolve({ error: 'Could not parse the playlist response.' }); }
       });
   });
@@ -444,8 +456,8 @@ function fetchMeta(url) {
             if (pick) thumb = pick.url;
           }
           resolve({
-            title: j.title || j.fulltitle || '',
-            uploader: j.uploader || j.channel || j.extractor_key || '',
+            title: decodeHtml(j.title || j.fulltitle || ''),
+            uploader: decodeHtml(j.uploader || j.channel || j.extractor_key || ''),
             duration: Math.round(j.duration || 0),
             thumbUrl: thumb,
             totalBytes: j.filesize || j.filesize_approx || 0
@@ -672,10 +684,14 @@ function startBatch({ url, folder, title, items }) {
 function downloadItem(b, it) {
   return new Promise((resolve) => {
     const out = `${b.folderAbs}/${String(it.index).padStart(3, '0')} - %(title).180B [%(id)s].%(ext)s`;
-    const src = it.url ? [it.url] : [b.url, '--playlist-items', String(it.index)];
-    const args = ['--newline', '--no-mtime', '--no-warnings', '--ignore-errors', '--continue',
+    const isDirectUrl = !!(it.url);
+    const src = isDirectUrl ? [it.url] : [b.url, '--playlist-items', String(it.index)];
+    // --ignore-errors only for the playlist-items fallback path; for a direct URL it would
+    // mask real failures (members-only, unavailable video) making them look like success.
+    const args = ['--newline', '--no-mtime', '--no-warnings', '--continue',
+      ...(!isDirectUrl ? ['--ignore-errors'] : []),
       '--download-archive', b.archive, ...ytNet(),
-      it.url ? '--no-playlist' : '--yes-playlist',
+      isDirectUrl ? '--no-playlist' : '--yes-playlist',
       '-o', out, '--merge-output-format', 'mp4',
       '--progress-template', 'PROG|%(progress.status)s|%(progress.downloaded_bytes)s|%(progress.total_bytes)s|%(progress.total_bytes_estimate)s|%(progress.speed)s|%(progress.eta)s',
       ...src];
