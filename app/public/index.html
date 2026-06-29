@@ -504,6 +504,11 @@
       <div class="dl-err" id="acctErr"></div>
       <div class="acct-ok" id="acctOk">Saved.</div>
       <button class="btn btn-primary" id="acctSave" style="width:100%;margin-top:8px">Save changes</button>
+      <hr style="border:none;border-top:1px solid var(--line);margin:20px 0 4px">
+      <label class="fld-label" for="acctProxy">Proxy / VPN <span class="fld-hint">(for sites blocked by your ISP — e.g. http://host:port or socks5://127.0.0.1:1080)</span></label>
+      <input class="fld" id="acctProxy" type="text" placeholder="Leave blank to disable" autocomplete="off" spellcheck="false">
+      <div class="acct-ok" id="proxyOk">Proxy saved — takes effect immediately.</div>
+      <button class="btn" id="proxySave" style="width:100%;margin-top:8px">Save proxy</button>
     </div>
   </div>
 
@@ -1338,11 +1343,14 @@ const acctEmail = document.getElementById('acctEmail');
 const acctCurrent = document.getElementById('acctCurrent');
 const acctNew = document.getElementById('acctNew');
 const acctConfirm = document.getElementById('acctConfirm');
+const acctProxy = document.getElementById('acctProxy');
+const proxyOk = document.getElementById('proxyOk');
 
 async function openAccount() {
-  acctErr.style.display = 'none'; acctOk.style.display = 'none';
+  acctErr.style.display = 'none'; acctOk.style.display = 'none'; proxyOk.style.display = 'none';
   acctCurrent.value = ''; acctNew.value = ''; acctConfirm.value = '';
   try { const r = await fetch('/api/me'); const d = await r.json(); acctEmail.value = d.user || ''; } catch {}
+  try { const r = await fetch('/api/settings'); const d = await r.json(); acctProxy.value = d.proxy || ''; } catch {}
   acctModal.classList.add('open'); acctBackdrop.classList.add('open');
   setTimeout(() => acctCurrent.focus(), 60);
 }
@@ -1371,6 +1379,18 @@ async function saveAccount() {
 document.getElementById('acctSave').addEventListener('click', saveAccount);
 acctModal.addEventListener('keydown', e => { if (e.key === 'Enter') saveAccount(); });
 window.addEventListener('keydown', e => { if (e.key === 'Escape' && acctModal.classList.contains('open')) closeAccount(); });
+
+document.getElementById('proxySave').addEventListener('click', async () => {
+  acctErr.style.display = 'none'; proxyOk.style.display = 'none';
+  const r = await fetch('/api/settings', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ proxy: acctProxy.value.trim() })
+  });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) { acctErr.textContent = d.error || 'Could not save proxy.'; acctErr.style.display = 'block'; return; }
+  proxyOk.style.display = 'block';
+  setTimeout(() => proxyOk.style.display = 'none', 2500);
+});
 
 // ---- Video info ----
 const infoModal = document.getElementById('infoModal');

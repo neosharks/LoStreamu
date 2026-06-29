@@ -57,20 +57,20 @@ const MEDIA_ROOT = resolve(config.mediaDir);
 // to reach playlists/age-restricted/members content (e.g. YouTube, which often
 // 403s playlist pages without a login). Passed to every yt-dlp invocation.
 const COOKIES_PATH = join(__dirname, 'cookies.txt');
-// Optional proxy/VPN for yt-dlp — set SV_PROXY (or config.proxy) to bypass
-// ISP/network blocks (e.g. a reset connection / [Errno 104] to some sites).
-// Examples: http://user:pass@host:port, socks5://127.0.0.1:1080
-const PROXY = process.env.SV_PROXY || config.proxy || '';
 // Prefer a local yt-dlp binary in the app dir (writable by the service user)
 // over the system one at /usr/local/bin/yt-dlp (root-owned, can't self-update
 // when running as an unprivileged service account).
 const YT_DLP_LOCAL = join(__dirname, 'yt-dlp');
 function ytDlpBin() { return fs.existsSync(YT_DLP_LOCAL) ? YT_DLP_LOCAL : 'yt-dlp'; }
+// Proxy is read dynamically from config so it takes effect immediately when
+// saved via the UI without needing a server restart. SV_PROXY env var overrides.
+function getProxy() { return process.env.SV_PROXY || config.proxy || ''; }
 // Common network flags applied to every yt-dlp call: cookies, proxy, retries.
 function ytNet() {
   const a = [];
   if (fs.existsSync(COOKIES_PATH)) a.push('--cookies', COOKIES_PATH);
-  if (PROXY) a.push('--proxy', PROXY);
+  const proxy = getProxy();
+  if (proxy) a.push('--proxy', proxy);
   a.push('--retries', '5', '--fragment-retries', '10', '--socket-timeout', '30');
   return a;
 }
@@ -82,8 +82,8 @@ function netHint(msg) {
   if (/sign.?in|log.?in required|age.?verif|members.?only|premium|private video|not available|account required/i.test(s))
     return s + ‘ — This video may require authentication. Drop a cookies.txt (Netscape format) next to server.js and retry.’;
   if (/reset by peer|errno 104|connection refused|timed out|network is unreachable|getaddrinfo|failed to resolve/i.test(s))
-    return s + (PROXY ? ‘ — even via the configured proxy. Check the proxy can reach this site.’
-                      : ‘ — this site looks blocked on the server\’s network. Set SV_PROXY to a VPN/proxy and retry.’);
+    return s + (getProxy() ? ‘ — even via the configured proxy. Check the proxy can reach this site.’
+                           : ‘ — this site looks blocked on the server\’s network. Set a proxy in Account → Network settings and retry.’);
   return s;
 }
 
@@ -871,6 +871,19 @@ app.post('/api/change-password', requireAuth, (req, res) => {
   saveConfig();
   req.session.user = config.email;
   res.json({ ok: true });
+});
+
+// Network settings (proxy) — readable and writable from the UI without a restart.
+app.get('/api/settings', requireAuth, (req, res) => {
+  res.json({ proxy: config.proxy || '' });
+});
+app.post('/api/settings', requireAuth, (req, res) => {
+  const proxy = (req.body?.proxy ?? '').trim();
+  if (proxy && !/^https?:\/\/|^socks[45]?:\/\//i.test(proxy))
+    return res.status(400).json({ error: 'Proxy must be an http://, https://, or socks5:// URL, or leave blank to disable.' });
+  config.proxy = proxy;
+  saveConfig();
+  res.json({ ok: true, proxy });
 });
 
 // Library listing — scoped to a folder (default root), optionally recursive.
