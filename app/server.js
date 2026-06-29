@@ -61,6 +61,11 @@ const COOKIES_PATH = join(__dirname, 'cookies.txt');
 // ISP/network blocks (e.g. a reset connection / [Errno 104] to some sites).
 // Examples: http://user:pass@host:port, socks5://127.0.0.1:1080
 const PROXY = process.env.SV_PROXY || config.proxy || '';
+// Prefer a local yt-dlp binary in the app dir (writable by the service user)
+// over the system one at /usr/local/bin/yt-dlp (root-owned, can't self-update
+// when running as an unprivileged service account).
+const YT_DLP_LOCAL = join(__dirname, 'yt-dlp');
+function ytDlpBin() { return fs.existsSync(YT_DLP_LOCAL) ? YT_DLP_LOCAL : 'yt-dlp'; }
 // Common network flags applied to every yt-dlp call: cookies, proxy, retries.
 function ytNet() {
   const a = [];
@@ -72,6 +77,8 @@ function ytNet() {
 // Append a hint when an error looks like a network/ISP block (reset/refused/etc.).
 function netHint(msg) {
   const s = msg || ‘’;
+  if (/HTTP Error 410|410.*Gone/i.test(s))
+    return s + ‘ — Video removed or unavailable on the site (410 Gone). If many videos fail like this, update yt-dlp via the ⬇ Update button.’;
   if (/sign.?in|log.?in required|age.?verif|members.?only|premium|private video|not available|account required/i.test(s))
     return s + ‘ — This video may require authentication. Drop a cookies.txt (Netscape format) next to server.js and retry.’;
   if (/reset by peer|errno 104|connection refused|timed out|network is unreachable|getaddrinfo|failed to resolve/i.test(s))
@@ -390,7 +397,7 @@ function jobView(job) {
 // Flat playlist probe — title + entry count, no per-video metadata.
 function fetchPlaylistMeta(url) {
   return new Promise((resolve) => {
-    execFile('yt-dlp', ['-J', '--flat-playlist', '--yes-playlist', '--no-warnings', '--no-progress', ...ytNet(), url],
+    execFile(ytDlpBin(), ['-J', '--flat-playlist', '--yes-playlist', '--no-warnings', '--no-progress', ...ytNet(), url],
       { maxBuffer: 64 * 1024 * 1024, timeout: 45000 }, (err, stdout) => {
         if (err) return resolve(null);
         try {
@@ -405,7 +412,7 @@ function fetchPlaylistMeta(url) {
 // so the UI can show what's in a playlist before downloading.
 function fetchPlaylistEntries(url) {
   return new Promise((resolve) => {
-    execFile('yt-dlp', ['-J', '--flat-playlist', '--yes-playlist', '--no-warnings', '--no-progress', ...ytNet(), url],
+    execFile(ytDlpBin(), ['-J', '--flat-playlist', '--yes-playlist', '--no-warnings', '--no-progress', ...ytNet(), url],
       { maxBuffer: 192 * 1024 * 1024, timeout: 90000 }, (err, stdout, stderr) => {
         if (err) {
           const msg = ((stderr || err.message || '').split('\n').filter(Boolean).pop() || 'Could not read playlist.')
@@ -444,7 +451,7 @@ function emit(jobId) {
 // Lightweight metadata probe (title, thumbnail, duration) — no download.
 function fetchMeta(url) {
   return new Promise((resolve) => {
-    execFile('yt-dlp', ['-J', '--no-playlist', '--no-warnings', '--no-progress', ...ytNet(), url],
+    execFile(ytDlpBin(), ['-J', '--no-playlist', '--no-warnings', '--no-progress', ...ytNet(), url],
       { maxBuffer: 32 * 1024 * 1024, timeout: 30000 }, (err, stdout) => {
         if (err) return resolve(null);
         try {
@@ -531,7 +538,7 @@ function startDownload(url, { folder = '', playlist = false, items = null } = {}
 
   let proc;
   try {
-    proc = spawn('yt-dlp', args);
+    proc = spawn(ytDlpBin(), args);
   } catch (e) {
     job.status = 'error';
     job.message = 'yt-dlp is not installed on the server.';
@@ -696,7 +703,7 @@ function downloadItem(b, it) {
       '--progress-template', 'PROG|%(progress.status)s|%(progress.downloaded_bytes)s|%(progress.total_bytes)s|%(progress.total_bytes_estimate)s|%(progress.speed)s|%(progress.eta)s',
       ...src];
     let proc;
-    try { proc = spawn('yt-dlp', args); }
+    try { proc = spawn(ytDlpBin(), args); }
     catch { it.status = 'error'; it.message = 'yt-dlp not installed'; emitB(b); return resolve('error'); }
     it.proc = proc; it.status = 'downloading'; it.message = 'Downloading…'; it._archived = false; emitB(b);
     let buf = '', errTail = '';
@@ -770,10 +777,27 @@ function skipItem(b, index) {
 // Self-updates the standalone binary on boot, then every 12h.
 // ---------------------------------------------------------------------------
 function updateYtDlp() {
-  execFile('yt-dlp', ['-U'], { timeout: 120000 }, (err, stdout) => {
+  execFile(ytDlpBin(), ['-U'], { timeout: 120000 }, (err, stdout) => {
     const line = (stdout || '').trim().split('\n').filter(Boolean).pop();
-    if (err) console.warn('  yt-dlp self-update skipped:', (err.message || '').split('\n')[0]);
-    else if (line) console.log(`  yt-dlp: ${line}`);
+    if (!err) { if (line) console.log(`  yt-dlp: ${line}`); return; }
+    // -U failed — likely the binary is root-owned and this process lacks write permission.
+    // Download the latest standalone binary directly into the app dir (which the service
+    // user can write to) and use it from then on.
+    const tmp = YT_DLP_LOCAL + '.tmp';
+    console.warn('  yt-dlp -U failed; downloading latest binary to app dir…');
+    execFile('curl', ['-fsSL',
+      'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp',
+      '-o', tmp], { timeout: 120000 }, (e2) => {
+      if (e2) { console.warn('  yt-dlp download failed:', e2.message.split('\n')[0]); return; }
+      try {
+        fs.renameSync(tmp, YT_DLP_LOCAL);
+        fs.chmodSync(YT_DLP_LOCAL, 0o755);
+        console.log('  yt-dlp: updated local binary →', YT_DLP_LOCAL);
+      } catch (e3) {
+        console.warn('  yt-dlp: could not install local binary:', e3.message);
+        try { fs.rmSync(tmp, { force: true }); } catch {}
+      }
+    });
   });
 }
 updateYtDlp();
