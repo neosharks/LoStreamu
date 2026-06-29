@@ -6,6 +6,9 @@
 # secrets.json are never overwritten.
 set -euo pipefail
 
+# Ensure /usr/local/bin is always in PATH — pct exec gives a minimal environment.
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
 APP_DIR="/opt/streamvault"
 SVC_USER="streamvault"
 SVC_FILE="/etc/systemd/system/streamvault.service"
@@ -126,10 +129,12 @@ if command -v yt-dlp >/dev/null 2>&1; then
   YTDLP_OLD="$(yt-dlp --version 2>/dev/null || echo 'unknown')"
   info "Current version: $YTDLP_OLD"
 fi
+mkdir -p /usr/local/bin
 curl -fsSL https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp \
   -o /usr/local/bin/yt-dlp
 chmod a+rx /usr/local/bin/yt-dlp
-YTDLP_NEW="$(yt-dlp --version)"
+hash -r 2>/dev/null || true  # clear bash's command cache
+YTDLP_NEW="$(/usr/local/bin/yt-dlp --version)"
 if [ "$YTDLP_OLD" = "$YTDLP_NEW" ]; then
   ok "yt-dlp already at latest: $YTDLP_NEW"
 else
