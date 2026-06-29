@@ -69,6 +69,13 @@ function ytNet() {
   a.push('--retries', '5', '--fragment-retries', '10', '--socket-timeout', '30');
   return a;
 }
+// Append a hint when an error looks like a network/ISP block (reset/refused/etc.).
+function netHint(msg) {
+  return /reset by peer|errno 104|connection refused|timed out|network is unreachable|getaddrinfo|failed to resolve/i.test(msg || '')
+    ? msg + (PROXY ? ' — even via the configured proxy. Check the proxy can reach this site.'
+                   : ' — this site looks blocked on the server’s network. Set SV_PROXY to a VPN/proxy and retry.')
+    : msg;
+}
 
 function safePath(rel) {
   const abs = resolve(MEDIA_ROOT, String(rel || '').replace(/^[/\\]+/, ''));
@@ -391,7 +398,7 @@ function fetchPlaylistEntries(url) {
         if (err) {
           const msg = ((stderr || err.message || '').split('\n').filter(Boolean).pop() || 'Could not read playlist.')
             .replace(/^ERROR:\s*/, '').slice(0, 300);
-          return resolve({ error: msg });
+          return resolve({ error: netHint(msg) });
         }
         try {
           const j = JSON.parse(stdout);
@@ -603,7 +610,7 @@ function startDownload(url, { folder = '', playlist = false, items = null } = {}
       emit(id);
     } else {
       job.status = 'error';
-      job.message = (errTail.trim().split('\n').pop() || 'Download failed').slice(0, 200);
+      job.message = netHint((errTail.trim().split('\n').pop() || 'Download failed').slice(0, 200));
       rescan(); buildMeta().catch(() => {}); pruneEmptyDirs(destAbs);
       emit(id);
     }
