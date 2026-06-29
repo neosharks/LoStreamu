@@ -195,6 +195,21 @@
   .dl-dock-txt .s { font-size: .72rem; color: var(--muted); font-variant-numeric: tabular-nums; }
   .dl-dock-bar { height: 4px; background: rgba(255,255,255,.1); }
   .dl-dock-bar .fill { height: 100%; background: var(--accent); width: 0; transition: width .25s; }
+
+  /* Self-update overlay */
+  .up-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.66); backdrop-filter: blur(3px);
+    z-index: 60; display: none; align-items: center; justify-content: center; }
+  .up-overlay.open { display: flex; }
+  .up-box { width: 560px; max-width: calc(100vw - 32px); max-height: calc(100vh - 80px);
+    background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+    display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 24px 60px rgba(0,0,0,.5); }
+  .up-title { padding: 16px 20px; font-weight: 650; border-bottom: 1px solid var(--line);
+    display: flex; align-items: center; gap: 10px; }
+  .up-title .dl-dock-spin { width: 16px; height: 16px; }
+  .up-log { margin: 0; padding: 14px 20px; overflow: auto; flex: 1; min-height: 120px; font-size: .76rem;
+    line-height: 1.55; color: var(--muted); white-space: pre-wrap; word-break: break-word;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .up-foot { padding: 12px 20px; border-top: 1px solid var(--line); display: flex; justify-content: flex-end; }
 </style>
 </head>
 <body>
@@ -207,6 +222,7 @@
       <span class="count" id="count"></span>
       <button class="btn btn-primary" id="addVideos">+ Add videos</button>
       <button class="btn" id="rescan">Rescan</button>
+      <button class="btn" id="update" title="Pull the latest version from GitHub">Update</button>
       <button class="btn" id="logout">Sign out</button>
     </div>
   </header>
@@ -243,6 +259,15 @@
       </div>
     </div>
     <div class="dl-dock-bar"><div class="fill" id="dockFill"></div></div>
+  </div>
+
+  <!-- Self-update overlay -->
+  <div class="up-overlay" id="upOverlay">
+    <div class="up-box">
+      <div class="up-title" id="upTitle">Updating…</div>
+      <pre class="up-log" id="upLog"></pre>
+      <div class="up-foot"><button class="btn" id="upClose" style="display:none">Close</button></div>
+    </div>
   </div>
 
   <main>
@@ -608,6 +633,58 @@ function updateDock() {
   document.getElementById('dockSub').textContent = bits.join(' · ') || 'Starting…';
   document.getElementById('dockFill').style.width = avg + '%';
   dlDock.classList.add('show');
+}
+
+// ---- Self-update ----
+const upOverlay = document.getElementById('upOverlay');
+const upLog = document.getElementById('upLog');
+const upTitle = document.getElementById('upTitle');
+const upClose = document.getElementById('upClose');
+let upPoll = null;
+const spin = t => '<span class="dl-dock-spin"></span> ' + t;
+
+document.getElementById('update').addEventListener('click', async () => {
+  if (!confirm('Update StreamVault to the latest version from GitHub?\n\nThe server will restart and this page will reload. In-progress downloads will be interrupted.')) return;
+  upOverlay.classList.add('open');
+  upClose.style.display = 'none';
+  upTitle.innerHTML = spin('Updating…');
+  upLog.textContent = 'Starting…';
+  const r = await fetch('/api/update', { method: 'POST' }).catch(() => null);
+  if (!r) return upFail('Could not reach the server.');
+  if (!r.ok) { const d = await r.json().catch(() => ({})); return upFail(d.error || 'Update could not start.'); }
+  pollUpdate();
+});
+upClose.addEventListener('click', () => upOverlay.classList.remove('open'));
+
+function upFail(msg) {
+  if (upPoll) { clearInterval(upPoll); upPoll = null; }
+  upTitle.textContent = 'Update failed';
+  if (msg) upLog.textContent += (upLog.textContent ? '\n' : '') + msg;
+  upClose.style.display = '';
+}
+
+function pollUpdate() {
+  let progressed = false, wentDown = false;
+  if (upPoll) clearInterval(upPoll);
+  upPoll = setInterval(async () => {
+    let s = null;
+    try { const r = await fetch('/api/update/status', { cache: 'no-store' }); if (r.ok) s = await r.json(); } catch {}
+    if (s) {
+      if (s.log && s.log.length) { upLog.textContent = s.log.join('\n'); upLog.scrollTop = upLog.scrollHeight; }
+      if (s.status === 'running') { progressed = true; upTitle.innerHTML = spin('Updating…'); }
+      else if (s.status === 'restarting') { progressed = true; upTitle.innerHTML = spin('Restarting…'); }
+      else if (s.status === 'error') { upFail(); }
+      else if (s.status === 'idle' && progressed && wentDown) {
+        clearInterval(upPoll); upPoll = null;
+        upTitle.textContent = 'Updated — reloading…';
+        setTimeout(() => location.reload(), 800);
+      }
+    } else if (progressed) {
+      // Server unreachable mid-update — restart in progress.
+      wentDown = true;
+      upTitle.innerHTML = spin('Restarting…');
+    }
+  }, 1000);
 }
 
 load();

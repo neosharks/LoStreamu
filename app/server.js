@@ -23,7 +23,9 @@ function loadConfig() {
       // bcrypt hash of "changeme" — change this by running: npm run set-password
       passwordHash: bcrypt.hashSync(defaultPassword, 10),
       mediaDir: join(__dirname, 'media'),
-      sessionSecret: crypto.randomBytes(32).toString('hex')
+      sessionSecret: crypto.randomBytes(32).toString('hex'),
+      // Tarball the in-app "Update" button pulls from. Override per fork.
+      updateUrl: 'https://raw.githubusercontent.com/thakursat/hosted-video-streamer/main/streamvault-app.tar.gz'
     };
     fs.writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2));
     console.log('\n  Created config.json with default login:');
@@ -456,6 +458,80 @@ app.post('/api/download/:id/dismiss', requireAuth, (req, res) => {
   const job = downloads.get(req.params.id);
   if (job && !job.proc) downloads.delete(req.params.id);
   res.json({ ok: true });
+});
+
+// ---------------------------------------------------------------------------
+// Self-update — pull the latest app tarball from GitHub, reinstall deps, refresh
+// yt-dlp, and restart. Runs as the unprivileged service user, so it can't call
+// systemctl; it exits non-zero and relies on the unit's `Restart=on-failure`.
+// ---------------------------------------------------------------------------
+const UPDATE_URL = process.env.SV_UPDATE_URL || config.updateUrl ||
+  'https://raw.githubusercontent.com/thakursat/hosted-video-streamer/main/streamvault-app.tar.gz';
+
+const update = { status: 'idle', log: [] };
+function ulog(line) {
+  const s = String(line).replace(/\s+$/, '');
+  if (s) { update.log.push(s); if (update.log.length > 200) update.log.shift(); }
+}
+
+function runUpdate() {
+  if (update.status === 'running' || update.status === 'restarting') return;
+  update.status = 'running'; update.log = [];
+  ulog('Source: ' + UPDATE_URL);
+
+  // HOME/npm cache point at a writable temp dir — the service user has no home.
+  const script = `
+set -e
+APP_DIR=${JSON.stringify(__dirname)}
+URL=${JSON.stringify(UPDATE_URL)}
+export HOME="$(mktemp -d)"
+export npm_config_cache="$HOME/.npm"
+echo "Downloading latest app…"
+TMP="$(mktemp "\${TMPDIR:-/tmp}/sv.XXXXXX.tar.gz")"
+curl -fsSL "$URL" -o "$TMP"
+echo "Unpacking…"
+tar -xzf "$TMP" -C "$APP_DIR"
+rm -f "$TMP"
+test -f "$APP_DIR/package.json"
+echo "Installing dependencies…"
+cd "$APP_DIR"
+npm install --omit=dev --no-fund --no-audit
+echo "Refreshing yt-dlp…"
+yt-dlp -U || echo "yt-dlp self-update skipped (handled by the daily timer)"
+echo "Update staged."
+`;
+  let proc;
+  try {
+    proc = spawn('bash', ['-c', script], { stdio: ['ignore', 'pipe', 'pipe'] });
+  } catch (e) {
+    update.status = 'error'; ulog('Could not start update: ' + e.message); return;
+  }
+  const onOut = (c) => c.toString().split('\n').forEach(ulog);
+  proc.stdout.on('data', onOut);
+  proc.stderr.on('data', onOut);
+  proc.on('error', (e) => { update.status = 'error'; ulog('Update process error: ' + e.message); });
+  proc.on('close', (code) => {
+    if (code === 0) {
+      update.status = 'restarting';
+      ulog('Restarting service…');
+      // Exit non-zero so systemd (Restart=on-failure) brings us back on new code.
+      setTimeout(() => process.exit(1), 1200);
+    } else {
+      update.status = 'error';
+      ulog(`Update failed (exit ${code}).`);
+    }
+  });
+}
+
+app.post('/api/update', requireAuth, (req, res) => {
+  if (update.status === 'running' || update.status === 'restarting')
+    return res.status(409).json({ error: 'An update is already in progress.' });
+  runUpdate();
+  res.json({ ok: true, status: update.status });
+});
+
+app.get('/api/update/status', requireAuth, (req, res) => {
+  res.json({ status: update.status, log: update.log });
 });
 
 app.use(requireAuth, express.static(join(__dirname, 'public')));
