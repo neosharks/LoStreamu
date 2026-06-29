@@ -427,6 +427,12 @@
       </button>
     </div>
   </header>
+  <div id="ytdlpBanner" style="display:none;background:rgba(245,197,66,.1);border-bottom:1px solid rgba(245,197,66,.22);padding:7px 20px;align-items:center;gap:12px;font-size:.82rem">
+    <svg viewBox="0 0 24 24" fill="none" stroke="#f5c542" stroke-width="2" style="width:15px;height:15px;flex-shrink:0"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
+    <span id="ytdlpMsg" style="flex:1"></span>
+    <button class="btn" id="ytdlpUpdateBtn" style="padding:4px 12px;font-size:.76rem">Update now</button>
+    <button id="ytdlpDismiss" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:1.1rem;padding:0 4px;line-height:1">&times;</button>
+  </div>
 
   <!-- Add videos modal + minimised dock -->
   <div class="dl-backdrop" id="dlBackdrop"></div>
@@ -1550,6 +1556,42 @@ window.addEventListener('keydown', e => {
   if (e.key !== 'Escape') return;
   if (infoModal.classList.contains('open')) closeInfo();
   if (statsModal.classList.contains('open')) closeStats();
+});
+
+// ---- yt-dlp version check ----
+async function checkYtDlp() {
+  try {
+    const r = await fetch('/api/ytdlp/version');
+    if (!r.ok) return;
+    const d = await r.json();
+    if (!d.outdated) return;
+    document.getElementById('ytdlpMsg').textContent =
+      'yt-dlp ' + d.current + ' is outdated (latest: ' + d.latest + ') — downloads may fail on recently changed sites.';
+    document.getElementById('ytdlpBanner').style.display = 'flex';
+  } catch {}
+}
+checkYtDlp();
+document.getElementById('ytdlpUpdateBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('ytdlpUpdateBtn');
+  const msg = document.getElementById('ytdlpMsg');
+  btn.disabled = true; btn.textContent = 'Updating…';
+  try {
+    const r = await fetch('/api/ytdlp/update', { method: 'POST' });
+    const d = await r.json().catch(() => ({}));
+    if (r.ok) {
+      msg.textContent = 'yt-dlp updated — retry your downloads now.';
+      btn.style.display = 'none';
+    } else {
+      msg.textContent = 'Update failed: ' + (d.error || 'unknown error');
+      btn.disabled = false; btn.textContent = 'Retry';
+    }
+  } catch {
+    msg.textContent = 'Update failed (network error).';
+    btn.disabled = false; btn.textContent = 'Retry';
+  }
+});
+document.getElementById('ytdlpDismiss').addEventListener('click', () => {
+  document.getElementById('ytdlpBanner').style.display = 'none';
 });
 
 load();

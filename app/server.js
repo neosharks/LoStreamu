@@ -886,6 +886,44 @@ app.post('/api/settings', requireAuth, (req, res) => {
   res.json({ ok: true, proxy });
 });
 
+// yt-dlp version check + in-app binary update.
+// GitHub latest-release tag is cached for 6 hours to avoid hammering the API.
+let _ytdlpLatest = { tag: null, at: 0 };
+app.get('/api/ytdlp/version', requireAuth, (req, res) => {
+  execFile(ytDlpBin(), ['--version'], { timeout: 8000 }, async (err, stdout) => {
+    const current = err ? null : stdout.trim();
+    const now = Date.now();
+    if (!_ytdlpLatest.tag || now - _ytdlpLatest.at > 6 * 60 * 60 * 1000) {
+      try {
+        const r = await fetch('https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest',
+          { headers: { 'User-Agent': 'streamvault/1.0' } });
+        const d = await r.json();
+        _ytdlpLatest = { tag: d.tag_name || null, at: now };
+      } catch {}
+    }
+    const latest = _ytdlpLatest.tag;
+    res.json({ current, latest, outdated: !!(current && latest && current !== latest) });
+  });
+});
+app.post('/api/ytdlp/update', requireAuth, (req, res) => {
+  const tmp = YT_DLP_LOCAL + '.tmp';
+  execFile('curl', ['-fsSL',
+    'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp',
+    '-o', tmp], { timeout: 120000 }, (err) => {
+    if (err) return res.status(500).json({ error: 'Download failed: ' + err.message.split('\n')[0] });
+    try {
+      fs.renameSync(tmp, YT_DLP_LOCAL);
+      fs.chmodSync(YT_DLP_LOCAL, 0o755);
+      try { fs.copyFileSync(YT_DLP_LOCAL, '/usr/local/bin/yt-dlp'); } catch {}
+      _ytdlpLatest = { tag: null, at: 0 };
+      res.json({ ok: true });
+    } catch (e) {
+      try { fs.rmSync(tmp, { force: true }); } catch {}
+      res.status(500).json({ error: 'Install failed: ' + e.message });
+    }
+  });
+});
+
 // Upload a video file directly from the client into the library.
 // Uses raw body streaming — no multipart parser or new dependency needed.
 app.put('/api/upload', requireAuth, (req, res) => {
