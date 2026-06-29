@@ -8,8 +8,7 @@
     "build:client": "npm run build --prefix client",
     "build": "npm run build:server && npm run build:client",
     "start": "node dist/index.js",
-    "set-password": "tsx src/cli/set-password.ts",
-    "gen-secrets": "tsx src/cli/gen-secrets.ts"
+    "set-password": "node dist/cli/set-password.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

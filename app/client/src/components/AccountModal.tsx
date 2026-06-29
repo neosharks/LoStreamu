@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -21,9 +21,8 @@ export function AccountModal({ open, onClose }: AccountModalProps) {
   const [newPw, setNewPw] = useState('');
   const [proxy, setProxy] = useState('');
 
-  // Sync fields when data loads
-  useState(() => { if (me) setEmail(me.email); });
-  useState(() => { if (settings) setProxy(settings.proxy); });
+  useEffect(() => { if (me) setEmail(me.email); }, [me]);
+  useEffect(() => { if (settings) setProxy(settings.proxy); }, [settings]);
 
   const changeMutation = useMutation({
     mutationFn: () => authApi.changePassword(currentPw, email !== me?.email ? email : undefined, newPw || undefined),
