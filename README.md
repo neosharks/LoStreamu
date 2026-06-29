@@ -12,12 +12,12 @@ show a live progress bar and are saved under randomized names.
 Run this in the **Proxmox VE host shell** (Datacenter → your node → Shell):
 
 ```bash
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/USER/REPO/main/streamvault.sh)"
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/thakursat/hosted-video-streamer/main/streamvault.sh)"
 ```
 
-> Replace `USER/REPO` with your GitHub path. **Edit the two URL variables at the
-> top of `streamvault.sh`** (`REPO_RAW`) to point at your repo before pushing —
-> the script pulls the app from `streamvault-app.tar.gz` in the same repo.
+> The script pulls the app from `streamvault-app.tar.gz` in this repo via the
+> `REPO_RAW` variable at the top of `streamvault.sh`. Forking? Override it with
+> `REPO_RAW=https://raw.githubusercontent.com/<you>/<repo>/main` before running.
 
 This creates a Debian 12 LXC and installs everything (Node.js, ffmpeg, yt-dlp,
 the app, and a systemd service). **Defaults: 2 vCPU, 8 GB RAM, 200 GB disk,
@@ -45,7 +45,7 @@ Export variables before running the one-liner:
 
 ```bash
 CT_RAM=4096 CT_DISK=100 CT_HOSTNAME=media \
-  bash -c "$(curl -fsSL https://raw.githubusercontent.com/USER/REPO/main/streamvault.sh)"
+  bash -c "$(curl -fsSL https://raw.githubusercontent.com/thakursat/hosted-video-streamer/main/streamvault.sh)"
 ```
 
 Available overrides: `CT_ID`, `CT_HOSTNAME`, `CT_CPU`, `CT_RAM` (MB), `CT_DISK`
@@ -64,7 +64,7 @@ Available overrides: `CT_ID`, `CT_HOSTNAME`, `CT_CPU`, `CT_RAM` (MB), `CT_DISK`
 ## Updating
 
 ```bash
-pct exec <CTID> -- bash -c "curl -fsSL https://raw.githubusercontent.com/USER/REPO/main/streamvault-app.tar.gz -o /tmp/sv.tar.gz && tar -xzf /tmp/sv.tar.gz -C /opt/streamvault && cd /opt/streamvault && npm install --omit=dev && chown -R streamvault:streamvault /opt/streamvault && systemctl restart streamvault"
+pct exec <CTID> -- bash -c "curl -fsSL https://raw.githubusercontent.com/thakursat/hosted-video-streamer/main/streamvault-app.tar.gz -o /tmp/sv.tar.gz && tar -xzf /tmp/sv.tar.gz -C /opt/streamvault && cd /opt/streamvault && npm install --omit=dev && chown -R streamvault:streamvault /opt/streamvault && systemctl restart streamvault"
 ```
 
 (Your `config.json` and `media/` are preserved.)
