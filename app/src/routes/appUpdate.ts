@@ -59,6 +59,14 @@ router.get('/app/update/stream', requireAuth, async (req, res) => {
     fs.rmSync(tarPath, { force: true });
     log(`✓ Extracted`);
 
+    log(`► Ensuring Chromium is installed...`);
+    try {
+      await runStep('sudo', ['apt-get', 'install', '-y', '--no-install-recommends', 'chromium'], '/', res);
+      log(`✓ Chromium ready`);
+    } catch {
+      log(`  (skipped — sudo not available, Chromium may already be installed)`);
+    }
+
     log(`► Installing server dependencies...`);
     await runStep('npm', ['install'], APP_DIR, res);
     log(`✓ Server deps installed`);

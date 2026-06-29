@@ -23,7 +23,7 @@ APP_PORT="8080"
 
 CT_ID="${CT_ID:-}"
 CT_HOSTNAME="${CT_HOSTNAME:-streamvault}"
-CT_CPU="${CT_CPU:-2}"
+CT_CPU="${CT_CPU:-4}"
 CT_RAM="${CT_RAM:-8192}"
 CT_DISK="${CT_DISK:-200}"
 CT_BRIDGE="${CT_BRIDGE:-vmbr0}"

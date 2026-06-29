@@ -1,30 +1,19 @@
 import fs from 'fs';
-import { chromium } from 'playwright-core';
+import puppeteer from 'puppeteer-core';
 import { COOKIES_PATH } from '../config';
 
-// Age-gate selectors to try clicking in order.
-const AGE_GATE_SELECTORS = [
-  'button[data-action="age-gate-confirm"]',
-  'button.ageGateButton',
-  'a.ageGateButton',
-  '[class*="ageGate"] button',
-  '[class*="age-gate"] button',
-  'button:has-text("I am 18")',
-  'button:has-text("Enter")',
-  'a:has-text("I am 18")',
-  '.age-gate .button',
+const CHROMIUM_PATHS = [
+  '/usr/bin/chromium',
+  '/usr/bin/chromium-browser',
+  '/usr/bin/google-chrome-stable',
+  '/usr/bin/google-chrome',
 ];
 
-let _refreshing = false;
-const COOKIE_MAX_AGE_MS = 30 * 60 * 1000; // refresh cookies every 30 minutes
-
-function cookiesAge(): number {
-  try {
-    const stat = fs.statSync(COOKIES_PATH);
-    return Date.now() - stat.mtimeMs;
-  } catch {
-    return Infinity;
+function findChromium(): string {
+  for (const p of CHROMIUM_PATHS) {
+    try { fs.accessSync(p, fs.constants.X_OK); return p; } catch {}
   }
+  throw new Error('Chromium not found — install with: apt-get install -y chromium');
 }
 
 function toNetscape(cookies: Array<{
@@ -34,79 +23,65 @@ function toNetscape(cookies: Array<{
   const lines = ['# Netscape HTTP Cookie File'];
   for (const c of cookies) {
     const domain = c.domain.startsWith('.') ? c.domain : '.' + c.domain;
-    const expires = c.expires > 0 ? c.expires : Math.floor(Date.now() / 1000) + 86400 * 30;
-    lines.push(`${domain}\tTRUE\t${c.path || '/'}\t${c.secure ? 'TRUE' : 'FALSE'}\t${expires}\t${c.name}\t${c.value}`);
+    const expires = c.expires > 0 ? Math.round(c.expires) : Math.floor(Date.now() / 1000) + 86400 * 30;
+    lines.push([domain, 'TRUE', c.path || '/', c.secure ? 'TRUE' : 'FALSE', expires, c.name, c.value].join('\t'));
   }
   return lines.join('\n') + '\n';
 }
 
+const COOKIE_MAX_AGE_MS = 30 * 60 * 1000;
+let _refreshing = false;
+
+function cookiesAge(): number {
+  try { return Date.now() - fs.statSync(COOKIES_PATH).mtimeMs; } catch { return Infinity; }
+}
+
 export async function refreshBrowserCookies(url: string): Promise<void> {
-  if (_refreshing) return;
-  if (cookiesAge() < COOKIE_MAX_AGE_MS) return;
+  if (_refreshing || cookiesAge() < COOKIE_MAX_AGE_MS) return;
   _refreshing = true;
   try {
-    const origin = new URL(url).origin;
-
-    const browser = await chromium.launch({
-      executablePath: findChromium(),
+    const executablePath = findChromium();
+    const browser = await puppeteer.launch({
+      executablePath,
       headless: true,
       args: [
-        '--no-sandbox', '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage', '--disable-gpu',
-        '--no-first-run', '--no-zygote',
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-gpu',
+        '--no-first-run',
+        '--no-zygote',
+        '--single-process',
       ],
     });
 
     try {
-      const context = await browser.newContext({
-        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
-        locale: 'en-US',
-        viewport: { width: 1280, height: 800 },
+      const page = await browser.newPage();
+      await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36');
+      await page.setExtraHTTPHeaders({
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
       });
 
-      const page = await context.newPage();
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
-      // Try each age-gate selector
-      for (const selector of AGE_GATE_SELECTORS) {
-        try {
-          const el = page.locator(selector).first();
-          if (await el.isVisible({ timeout: 2000 })) {
-            await el.click();
-            await page.waitForTimeout(1000);
-            break;
-          }
-        } catch {}
+      // Click the age-gate confirmation button if present
+      try {
+        await page.waitForSelector('.buttonOver18', { timeout: 5000 });
+        await page.click('.buttonOver18');
+        await new Promise(r => setTimeout(r, 1500));
+      } catch {
+        // No age gate visible — already accepted or not shown
       }
 
-      // Also visit the origin root to pick up any base cookies
-      if (!url.endsWith('/') || url !== origin + '/') {
-        try { await page.goto(origin, { waitUntil: 'domcontentloaded', timeout: 10000 }); } catch {}
-      }
-
-      const cookies = await context.cookies();
+      const cookies = await page.cookies();
       fs.writeFileSync(COOKIES_PATH, toNetscape(cookies));
-      await context.close();
     } finally {
       await browser.close();
     }
   } catch (err: any) {
-    console.warn('browserCookies: failed to refresh cookies:', err?.message?.split('\n')[0]);
+    console.warn('browserCookies: failed to refresh:', err?.message?.split('\n')[0]);
   } finally {
     _refreshing = false;
   }
-}
-
-function findChromium(): string {
-  const candidates = [
-    '/usr/bin/chromium',
-    '/usr/bin/chromium-browser',
-    '/usr/bin/google-chrome',
-    '/usr/bin/google-chrome-stable',
-    '/snap/bin/chromium',
-  ];
-  for (const p of candidates) {
-    try { fs.accessSync(p, fs.constants.X_OK); return p; } catch {}
-  }
-  throw new Error('Chromium not found. Install it: apt-get install -y chromium');
 }
