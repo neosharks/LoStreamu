@@ -49,7 +49,7 @@ pct exec <CTID> -- systemctl restart streamvault
 - **Library** — responsive grid with thumbnails, duration badges, folder tree sidebar, search, sort
 - **Player** — Plyr-based, mobile-friendly (swipe to close, iOS fullscreen), scrub preview thumbnails, resume position, auto-advance, playlist prev/next
 - **Downloads** — paste any yt-dlp-supported URL; live progress bar (speed + ETA); cancel mid-download
-- **Playlists** — preview playlist contents, select which items to download, batch download with per-item status, pause/resume/stop/skip
+- **Playlists** — preview playlist contents, cherry-pick items, then download 1–3 videos concurrently; per-item live progress (speed + ETA), cancel any individual video mid-download and the next one starts automatically; pause/resume/stop the whole batch
 - **Upload** — drag-and-drop or file picker with upload progress
 - **yt-dlp version indicator** — always visible in the navbar; shows current version, flags outdated, one-click update
 - **Proxy support** — set an HTTP/SOCKS5 proxy in Account → Network settings for blocked sites
@@ -62,7 +62,7 @@ pct exec <CTID> -- systemctl restart streamvault
 Re-run the installer inside the container — it detects an existing install, rebuilds, and restarts the service automatically:
 
 ```bash
-pct exec <CTID> -- bash -c "curl -fsSL https://raw.githubusercontent.com/thakursat/hosted-video-streamer/refs/heads/main/streamvault-app.tar.gz | tar -xz -C /opt/streamvault && bash /opt/streamvault/install-lxc.sh"
+pct exec <CTID> -- bash -c "curl -fsSL https://raw.githubusercontent.com/thakursat/hosted-video-streamer/refs/heads/main/streamvault-app.tar.gz -o /tmp/sv.tar.gz && tar -xzf /tmp/sv.tar.gz -C /opt/streamvault && rm /tmp/sv.tar.gz && bash /opt/streamvault/install-lxc.sh"
 ```
 
 `config.json`, `media/`, `thumbnails/`, and `secrets.json` are preserved.
