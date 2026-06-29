@@ -118,6 +118,12 @@ msg_ok "Container running with network"
 
 # ── Deploy ────────────────────────────────────────────────────────────────────
 
+msg_info "Installing curl in container..."
+pct exec "$CT_ID" -- bash -c \
+  "apt-get update -y -qq && apt-get install -y curl" \
+  || die "Failed to install curl in container."
+msg_ok "curl installed"
+
 msg_info "Downloading StreamVault app archive..."
 pct exec "$CT_ID" -- bash -c \
   "curl -fsSL '${APP_ARCHIVE_URL}' -o /tmp/sv.tar.gz" \
