@@ -6,6 +6,12 @@ video and it plays at full resolution. The player is deliberately minimal — a
 scrub timeline, 10-second skip back/forward, play/pause, next, and fullscreen.
 No quality menus, no settings to fiddle with.
 
+Each card shows a duration badge, resolution, and size, with hover actions to
+**download** the original file or open an **info** panel (resolution, codecs,
+bitrate, frame rate). Search filters the library instantly. A **Stats** view
+reports disk, memory, CPU load, uptime, library size, and active downloads.
+Downloads are also available from inside the player.
+
 ## Requirements
 
 - **Node.js 18+**

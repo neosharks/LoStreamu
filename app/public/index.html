@@ -6,75 +6,124 @@
 <title>StreamVault</title>
 <style>
   :root {
-    --bg: #0c0d10;
-    --panel: #15171c;
-    --panel-2: #1b1e25;
-    --line: #24272f;
-    --text: #e9eaed;
-    --muted: #8a8f9a;
-    --accent: #f0b429;
+    --bg: #0a0b0d;
+    --panel: #131519;
+    --panel-2: #191c22;
+    --panel-3: #1f232b;
+    --line: #23262e;
+    --line-2: #30343d;
+    --text: #eceef2;
+    --muted: #8b909b;
+    --faint: #5c616c;
+    --accent: #f5c542;
+    --accent-ink: #1a1300;
+    --danger: #ff9b9e;
+    --r-sm: 9px; --r: 12px; --r-lg: 18px;
+    --shadow: 0 24px 60px rgba(0,0,0,.55);
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scrollbar-color: var(--line-2) transparent; }
   body {
     background: var(--bg);
+    background-image: radial-gradient(900px 500px at 78% -8%, rgba(245,197,66,.07), transparent 60%);
     color: var(--text);
     font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-    min-height: 100vh;
+    min-height: 100vh; -webkit-font-smoothing: antialiased; letter-spacing: -0.005em;
   }
+  ::selection { background: rgba(245,197,66,.25); }
+
   header {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 16px 28px;
+    display: flex; align-items: center; gap: 18px;
+    padding: 14px 24px;
     border-bottom: 1px solid var(--line);
-    position: sticky; top: 0; background: rgba(12,13,16,.85);
-    backdrop-filter: blur(8px); z-index: 10;
+    position: sticky; top: 0; background: rgba(10,11,13,.78);
+    backdrop-filter: blur(14px); z-index: 10;
   }
-  .brand { display: flex; align-items: center; gap: 10px; }
-  .mark { width: 26px; height: 26px; border-radius: 7px; background: var(--accent);
-    display: grid; place-items: center; color: #1a1300; }
-  .mark svg { width: 15px; height: 15px; }
-  .brand h1 { font-size: 1.05rem; font-weight: 650; letter-spacing: -0.01em; }
-  .actions { display: flex; gap: 10px; align-items: center; }
+  .brand { display: flex; align-items: center; gap: 11px; flex: 0 0 auto; }
+  .mark { width: 30px; height: 30px; border-radius: 9px;
+    background: linear-gradient(150deg, #ffd95e, var(--accent));
+    display: grid; place-items: center; color: var(--accent-ink);
+    box-shadow: 0 4px 14px rgba(245,197,66,.3); }
+  .mark svg { width: 16px; height: 16px; }
+  .brand h1 { font-size: 1.08rem; font-weight: 680; letter-spacing: -0.02em; }
+
+  .search { position: relative; flex: 1; max-width: 460px; }
+  .search svg { position: absolute; left: 12px; top: 50%; transform: translateY(-50%);
+    width: 16px; height: 16px; color: var(--faint); pointer-events: none; }
+  .search input { width: 100%; background: var(--panel); border: 1px solid var(--line);
+    border-radius: 999px; color: var(--text); padding: 9px 14px 9px 36px; font-size: .86rem;
+    transition: border-color .15s, background .15s; }
+  .search input::placeholder { color: var(--faint); }
+  .search input:focus { outline: none; border-color: var(--line-2); background: var(--panel-2); }
+
+  .actions { display: flex; gap: 8px; align-items: center; flex: 0 0 auto; margin-left: auto; }
   .btn {
     background: var(--panel-2); color: var(--text);
-    border: 1px solid var(--line); border-radius: 8px;
-    padding: 8px 14px; font-size: 0.82rem; cursor: pointer; transition: .15s;
+    border: 1px solid var(--line); border-radius: var(--r-sm);
+    padding: 8px 14px; font-size: 0.82rem; font-weight: 540; cursor: pointer;
+    transition: border-color .15s, background .15s, transform .05s;
   }
-  .btn:hover { border-color: #383c46; }
-  .count { color: var(--muted); font-size: 0.8rem; }
+  .btn:hover { border-color: var(--line-2); background: var(--panel-3); }
+  .btn:active { transform: translateY(1px); }
+  .btn-primary { background: linear-gradient(150deg, #ffd95e, var(--accent));
+    color: var(--accent-ink); border-color: transparent; font-weight: 650; }
+  .btn-primary:hover { filter: brightness(1.05); }
+  /* Header icon buttons (secondary actions, decluttered) */
+  .hbtn { width: 38px; height: 38px; padding: 0; display: grid; place-items: center; border-radius: 10px; }
+  .hbtn svg { width: 18px; height: 18px; }
+  .count { color: var(--muted); font-size: 0.8rem; font-variant-numeric: tabular-nums; }
 
-  main { padding: 28px; max-width: 1400px; margin: 0 auto; }
+  main { padding: 26px 24px 60px; max-width: 1480px; margin: 0 auto; }
   .grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
-    gap: 20px;
+    grid-template-columns: repeat(auto-fill, minmax(236px, 1fr));
+    gap: 18px;
   }
   .card {
     background: var(--panel); border: 1px solid var(--line);
-    border-radius: 12px; overflow: hidden; cursor: pointer;
-    transition: transform .15s, border-color .15s;
+    border-radius: var(--r); overflow: hidden; cursor: pointer;
+    transition: transform .16s ease, border-color .16s, box-shadow .16s;
   }
-  .card:hover { transform: translateY(-3px); border-color: #3a3f4a; }
+  .card:hover { transform: translateY(-4px); border-color: var(--line-2);
+    box-shadow: 0 14px 34px rgba(0,0,0,.45); }
   .thumb {
     aspect-ratio: 16/9; background: #0e0f13 center/cover no-repeat;
     position: relative; display: grid; place-items: center;
   }
-  .thumb .ph { color: #3a3f4a; }
-  .thumb .ph svg { width: 36px; height: 36px; }
-  .card:hover .play {
-    opacity: 1;
-  }
+  .thumb .ph { color: #353a44; }
+  .thumb .ph svg { width: 38px; height: 38px; }
+  .card:hover .play { opacity: 1; }
   .play {
     position: absolute; inset: 0; display: grid; place-items: center;
-    background: rgba(0,0,0,.35); opacity: 0; transition: opacity .15s;
+    background: linear-gradient(rgba(0,0,0,.15), rgba(0,0,0,.45)); opacity: 0; transition: opacity .16s;
   }
-  .play div { width: 48px; height: 48px; border-radius: 50%; background: var(--accent);
-    display: grid; place-items: center; color: #1a1300; }
-  .play svg { width: 20px; height: 20px; margin-left: 2px; }
-  .meta { padding: 12px 14px; }
-  .meta .name { font-size: 0.9rem; font-weight: 550; line-height: 1.35;
+  .play div { width: 50px; height: 50px; border-radius: 50%;
+    background: linear-gradient(150deg, #ffd95e, var(--accent)); color: var(--accent-ink);
+    display: grid; place-items: center; box-shadow: 0 6px 18px rgba(0,0,0,.4); }
+  .play svg { width: 21px; height: 21px; margin-left: 3px; }
+
+  .badge { position: absolute; background: rgba(0,0,0,.8); color: #fff; font-size: .68rem;
+    font-weight: 600; padding: 2px 6px; border-radius: 5px; font-variant-numeric: tabular-nums;
+    backdrop-filter: blur(2px); }
+  .badge.dur { right: 8px; bottom: 8px; }
+
+  .card-actions { position: absolute; top: 8px; right: 8px; display: flex; gap: 6px;
+    opacity: 0; transform: translateY(-4px); transition: opacity .16s, transform .16s; z-index: 2; }
+  .card:hover .card-actions { opacity: 1; transform: translateY(0); }
+  .cardbtn { width: 30px; height: 30px; border-radius: 8px; border: none; cursor: pointer;
+    background: rgba(12,13,16,.72); color: #fff; display: grid; place-items: center;
+    backdrop-filter: blur(4px); transition: background .15s; }
+  .cardbtn:hover { background: rgba(245,197,66,.92); color: var(--accent-ink); }
+  .cardbtn svg { width: 16px; height: 16px; }
+
+  .meta { padding: 11px 13px 13px; }
+  .meta .name { font-size: 0.9rem; font-weight: 560; line-height: 1.35;
     overflow: hidden; text-overflow: ellipsis; display: -webkit-box;
     -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
-  .empty { color: var(--muted); text-align: center; padding: 80px 20px; }
+  .meta .subline { display: flex; gap: 8px; align-items: center; margin-top: 6px;
+    color: var(--muted); font-size: .73rem; font-variant-numeric: tabular-nums; }
+  .meta .subline .tag { background: var(--panel-3); border-radius: 5px; padding: 1px 6px; color: var(--muted); }
+  .empty { color: var(--muted); text-align: center; padding: 90px 20px; }
   .empty code { background: var(--panel-2); padding: 2px 7px; border-radius: 5px; color: var(--accent); }
 
   /* Player overlay */
@@ -117,10 +166,6 @@
     pointer-events: none; opacity: 0; transition: opacity .2s; }
   .player.show-ui .center-row, .player.paused .center-row { opacity: 1; }
   .center-row .iconbtn { pointer-events: auto; }
-
-  /* Add-videos button */
-  .btn-primary { background: var(--accent); color: #1a1300; border-color: var(--accent); font-weight: 600; }
-  .btn-primary:hover { filter: brightness(1.07); border-color: var(--accent); }
 
   /* Add-videos modal */
   .dl-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.6); backdrop-filter: blur(3px);
@@ -219,6 +264,41 @@
     color: var(--text); padding: 10px 12px; font-size: .9rem; }
   .fld:focus { outline: none; border-color: var(--accent); }
   .acct-ok { color: var(--accent); font-size: .82rem; margin-top: 10px; display: none; }
+
+  /* Video info modal */
+  .info-poster { width: 100%; aspect-ratio: 16/9; border-radius: var(--r); overflow: hidden;
+    background: #0e0f13 center/cover no-repeat; position: relative; display: grid; place-items: center;
+    border: 1px solid var(--line); }
+  .info-poster .ph svg { width: 40px; height: 40px; color: #353a44; }
+  .info-poster .badge.dur { right: 10px; bottom: 10px; }
+  .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: var(--line);
+    border: 1px solid var(--line); border-radius: var(--r); overflow: hidden; margin-top: 16px; }
+  .info-cell { background: var(--panel-2); padding: 11px 13px; }
+  .info-cell .k { color: var(--muted); font-size: .7rem; text-transform: uppercase; letter-spacing: .04em; }
+  .info-cell .v { font-size: .92rem; font-weight: 560; margin-top: 3px; font-variant-numeric: tabular-nums;
+    word-break: break-word; }
+  .info-actions { display: flex; gap: 10px; margin-top: 16px; }
+  .info-actions .btn { flex: 1; text-align: center; padding: 11px; }
+
+  /* Stats modal */
+  .stat-row { display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 13px 0; border-bottom: 1px solid var(--line); }
+  .stat-row:last-child { border-bottom: none; }
+  .stat-k { color: var(--muted); font-size: .82rem; flex: 0 0 auto; }
+  .stat-v { font-size: .9rem; font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; }
+  .gauge { margin: 4px 0 2px; }
+  .gauge-head { display: flex; justify-content: space-between; font-size: .8rem; margin-bottom: 7px; }
+  .gauge-head .lbl { color: var(--muted); }
+  .gauge-head .val { font-weight: 600; font-variant-numeric: tabular-nums; }
+  .gauge-bar { height: 8px; background: var(--panel-3); border-radius: 6px; overflow: hidden; }
+  .gauge-fill { height: 100%; border-radius: 6px; background: linear-gradient(90deg, var(--accent), #ffd95e);
+    width: 0; transition: width .4s ease; }
+  .gauge-fill.warn { background: linear-gradient(90deg, #ff8a4c, #ffb347); }
+  .gauge-fill.crit { background: linear-gradient(90deg, #ff5d5d, #ff8a8a); }
+  .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 16px; }
+  .stat-chip { background: var(--panel-2); border: 1px solid var(--line); border-radius: var(--r); padding: 13px 14px; }
+  .stat-chip .n { font-size: 1.35rem; font-weight: 700; letter-spacing: -0.02em; }
+  .stat-chip .l { color: var(--muted); font-size: .74rem; margin-top: 3px; }
 </style>
 </head>
 <body>
@@ -227,13 +307,28 @@
       <div class="mark"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></div>
       <h1>StreamVault</h1>
     </div>
+    <div class="search">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+      <input id="search" type="search" placeholder="Search your library…" autocomplete="off">
+    </div>
     <div class="actions">
       <span class="count" id="count"></span>
       <button class="btn btn-primary" id="addVideos">+ Add videos</button>
-      <button class="btn" id="rescan">Rescan</button>
-      <button class="btn" id="update" title="Pull the latest version from GitHub">Update</button>
-      <button class="btn" id="account" title="Change email or password">Account</button>
-      <button class="btn" id="logout">Sign out</button>
+      <button class="btn hbtn" id="stats" title="Server stats">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>
+      </button>
+      <button class="btn hbtn" id="rescan" title="Rescan library">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-2.6-6.4M21 3v5h-5"/></svg>
+      </button>
+      <button class="btn hbtn" id="update" title="Update from GitHub">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>
+      </button>
+      <button class="btn hbtn" id="account" title="Account settings">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>
+      </button>
+      <button class="btn hbtn" id="logout" title="Sign out">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 17l5-5-5-5M21 12H9M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/></svg>
+      </button>
     </div>
   </header>
 
@@ -304,6 +399,33 @@
     </div>
   </div>
 
+  <!-- Video info -->
+  <div class="dl-backdrop" id="infoBackdrop"></div>
+  <div class="dl-modal" id="infoModal" role="dialog" aria-modal="true" aria-label="Video info" style="width:520px">
+    <div class="dl-head">
+      <h2 id="infoTitle" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Video</h2>
+      <button class="iconbtn sm" id="infoClose" title="Close">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </div>
+    <div class="dl-body" id="infoBody"></div>
+  </div>
+
+  <!-- Server stats -->
+  <div class="dl-backdrop" id="statsBackdrop"></div>
+  <div class="dl-modal" id="statsModal" role="dialog" aria-modal="true" aria-label="Server stats" style="width:480px">
+    <div class="dl-head">
+      <h2>Server stats</h2>
+      <button class="iconbtn sm" id="statsRefresh" title="Refresh">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-2.6-6.4M21 3v5h-5"/></svg>
+      </button>
+      <button class="iconbtn sm" id="statsClose" title="Close">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </div>
+    <div class="dl-body" id="statsBody"></div>
+  </div>
+
   <main>
     <div class="grid" id="grid"></div>
     <div class="empty" id="empty" style="display:none">
@@ -316,9 +438,14 @@
 
     <div class="ptop">
       <span class="ptitle" id="ptitle"></span>
-      <button class="iconbtn" id="close" title="Close">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6L6 18"/></svg>
-      </button>
+      <div style="display:flex;gap:10px;align-items:center">
+        <button class="iconbtn" id="pdownload" title="Download">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>
+        </button>
+        <button class="iconbtn" id="close" title="Close">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </div>
     </div>
 
     <div class="center-row">
@@ -371,27 +498,50 @@ async function load() {
   render();
 }
 
+let query = '';
+
 function render() {
-  countEl.textContent = videos.length ? videos.length + ' videos' : '';
+  countEl.textContent = videos.length ? videos.length + (videos.length === 1 ? ' video' : ' videos') : '';
   grid.innerHTML = '';
-  empty.style.display = videos.length ? 'none' : 'block';
-  videos.forEach((v, i) => {
+  const list = videos.map((v, i) => ({ v, i })).filter(({ v }) => v.name.toLowerCase().includes(query));
+  if (!videos.length) { empty.innerHTML = 'No videos yet. Use <strong>+ Add videos</strong> to download by link, or drop files in your media folder and rescan.'; empty.style.display = 'block'; }
+  else if (!list.length) { empty.innerHTML = 'No matches for “' + escapeHtml(query) + '”.'; empty.style.display = 'block'; }
+  else empty.style.display = 'none';
+
+  list.forEach(({ v, i }) => {
     const card = document.createElement('div');
     card.className = 'card';
+    const res = v.height ? v.height + 'p' : '';
+    const sub = [res, humanSize(v.size)].filter(Boolean);
     card.innerHTML = `
       <div class="thumb" style="background-image:url('/thumb/${v.id}')">
         <div class="ph"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 4h16v16H4zM9 9l6 3-6 3z"/></svg></div>
+        <div class="card-actions">
+          <button class="cardbtn" data-act="info" title="Info"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 7.5v.5"/></svg></button>
+          <button class="cardbtn" data-act="dl" title="Download"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg></button>
+        </div>
+        ${v.duration ? `<span class="badge dur">${fmtDur(v.duration)}</span>` : ''}
         <div class="play"><div><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></div></div>
       </div>
-      <div class="meta"><div class="name">${escapeHtml(v.name)}</div></div>`;
-    // Hide placeholder once the real thumb loads
+      <div class="meta">
+        <div class="name">${escapeHtml(v.name)}</div>
+        ${sub.length ? `<div class="subline">${sub.map(s => `<span class="tag">${escapeHtml(s)}</span>`).join('')}</div>` : ''}
+      </div>`;
     const img = new Image();
     img.onload = () => { const ph = card.querySelector('.ph'); if (ph) ph.style.display = 'none'; };
     img.src = '/thumb/' + v.id;
-    card.addEventListener('click', () => playIndex(i));
+    card.addEventListener('click', (e) => {
+      const act = e.target.closest('[data-act]');
+      if (act) { e.stopPropagation(); act.dataset.act === 'info' ? openInfo(v.id) : downloadVideo(v.id); return; }
+      playIndex(i);
+    });
     grid.appendChild(card);
   });
 }
+
+function downloadVideo(id) { window.location.href = '/api/videos/' + id + '/download'; }
+
+document.getElementById('search').addEventListener('input', e => { query = e.target.value.trim().toLowerCase(); render(); });
 
 function escapeHtml(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 
@@ -476,6 +626,9 @@ function closePlayer() {
   video.pause(); video.removeAttribute('src'); video.load();
 }
 document.getElementById('close').addEventListener('click', closePlayer);
+document.getElementById('pdownload').addEventListener('click', () => {
+  if (current >= 0 && videos[current]) downloadVideo(videos[current].id);
+});
 
 // Auto-hide UI on inactivity
 let hideTimer;
@@ -763,6 +916,103 @@ async function saveAccount() {
 document.getElementById('acctSave').addEventListener('click', saveAccount);
 acctModal.addEventListener('keydown', e => { if (e.key === 'Enter') saveAccount(); });
 window.addEventListener('keydown', e => { if (e.key === 'Escape' && acctModal.classList.contains('open')) closeAccount(); });
+
+// ---- Video info ----
+const infoModal = document.getElementById('infoModal');
+const infoBackdrop = document.getElementById('infoBackdrop');
+const infoBody = document.getElementById('infoBody');
+const infoTitle = document.getElementById('infoTitle');
+
+async function openInfo(id) {
+  infoTitle.textContent = 'Loading…';
+  infoBody.innerHTML = '<div class="dl-empty">Loading…</div>';
+  infoModal.classList.add('open'); infoBackdrop.classList.add('open');
+  let d = {};
+  try { const r = await fetch('/api/videos/' + id + '/info'); d = await r.json(); } catch {}
+  infoTitle.textContent = d.name || 'Video';
+  const cells = [
+    ['Resolution', d.width && d.height ? d.width + ' × ' + d.height : '—'],
+    ['Duration', d.duration ? fmtDur(d.duration) : '—'],
+    ['Size', d.size ? humanSize(d.size) : '—'],
+    ['Format', (d.ext || '').toUpperCase() || '—'],
+    ['Video codec', d.vcodec || '—'],
+    ['Audio codec', d.acodec || '—'],
+    ['Bitrate', d.bitrate ? (d.bitrate / 1e6).toFixed(2) + ' Mbps' : '—'],
+    ['Frame rate', d.fps ? d.fps + ' fps' : '—']
+  ];
+  infoBody.innerHTML = `
+    <div class="info-poster" style="background-image:url('/thumb/${id}')">
+      <div class="ph"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 4h16v16H4zM9 9l6 3-6 3z"/></svg></div>
+      ${d.duration ? `<span class="badge dur">${fmtDur(d.duration)}</span>` : ''}
+    </div>
+    <div class="info-grid">${cells.map(([k, v]) => `<div class="info-cell"><div class="k">${k}</div><div class="v">${escapeHtml(String(v))}</div></div>`).join('')}</div>
+    <div class="info-actions">
+      <button class="btn btn-primary" id="infoPlay">▶ Play</button>
+      <button class="btn" id="infoDl">Download</button>
+    </div>`;
+  const img = new Image();
+  img.onload = () => { const ph = infoBody.querySelector('.info-poster .ph'); if (ph) ph.style.display = 'none'; };
+  img.src = '/thumb/' + id;
+  infoBody.querySelector('#infoPlay').onclick = () => { closeInfo(); const idx = videos.findIndex(v => v.id === id); if (idx >= 0) playIndex(idx); };
+  infoBody.querySelector('#infoDl').onclick = () => downloadVideo(id);
+}
+function closeInfo() { infoModal.classList.remove('open'); infoBackdrop.classList.remove('open'); }
+document.getElementById('infoClose').addEventListener('click', closeInfo);
+infoBackdrop.addEventListener('click', closeInfo);
+
+// ---- Server stats ----
+const statsModal = document.getElementById('statsModal');
+const statsBackdrop = document.getElementById('statsBackdrop');
+const statsBody = document.getElementById('statsBody');
+
+function openStats() {
+  statsBody.innerHTML = '<div class="dl-empty">Loading…</div>';
+  statsModal.classList.add('open'); statsBackdrop.classList.add('open');
+  loadStats();
+}
+function closeStats() { statsModal.classList.remove('open'); statsBackdrop.classList.remove('open'); }
+
+async function loadStats() {
+  let s = null;
+  try { const r = await fetch('/api/stats'); if (r.ok) s = await r.json(); } catch {}
+  if (!s) { statsBody.innerHTML = '<div class="dl-empty">Could not load stats.</div>'; return; }
+  const gauge = (lbl, used, total) => {
+    const pct = total ? (used / total) * 100 : 0;
+    const cls = pct > 90 ? 'crit' : pct > 75 ? 'warn' : '';
+    return `<div class="gauge"><div class="gauge-head"><span class="lbl">${lbl}</span>
+      <span class="val">${humanSize(used)} / ${humanSize(total)} · ${pct.toFixed(0)}%</span></div>
+      <div class="gauge-bar"><div class="gauge-fill ${cls}" style="width:${pct.toFixed(1)}%"></div></div></div>`;
+  };
+  const fmtUp = sec => { sec = Math.floor(sec || 0); const d = Math.floor(sec / 86400), h = Math.floor(sec % 86400 / 3600), m = Math.floor(sec % 3600 / 60); return (d ? d + 'd ' : '') + (h ? h + 'h ' : '') + m + 'm'; };
+  statsBody.innerHTML = `
+    <div class="stat-grid">
+      <div class="stat-chip"><div class="n">${s.videos}</div><div class="l">Videos</div></div>
+      <div class="stat-chip"><div class="n">${humanSize(s.libraryBytes)}</div><div class="l">Library size</div></div>
+    </div>
+    <div style="margin-top:16px">
+      ${s.disk ? gauge('Disk', s.disk.used, s.disk.total) : ''}
+      ${s.mem ? gauge('Memory', s.mem.used, s.mem.total) : ''}
+    </div>
+    <div style="margin-top:14px">
+      <div class="stat-row"><span class="stat-k">CPU cores</span><span class="stat-v">${s.cpu.count}</span></div>
+      <div class="stat-row"><span class="stat-k">Load avg (1·5·15m)</span><span class="stat-v">${s.cpu.load.map(x => x.toFixed(2)).join(' · ')}</span></div>
+      <div class="stat-row"><span class="stat-k">Active downloads</span><span class="stat-v">${s.activeDownloads}</span></div>
+      <div class="stat-row"><span class="stat-k">Server uptime</span><span class="stat-v">${fmtUp(s.uptime.system)}</span></div>
+      <div class="stat-row"><span class="stat-k">App uptime</span><span class="stat-v">${fmtUp(s.uptime.process)}</span></div>
+      <div class="stat-row"><span class="stat-k">Node</span><span class="stat-v">${escapeHtml(s.node)}</span></div>
+      <div class="stat-row"><span class="stat-k">Platform</span><span class="stat-v">${escapeHtml(s.platform)}</span></div>
+    </div>`;
+}
+document.getElementById('stats').addEventListener('click', openStats);
+document.getElementById('statsClose').addEventListener('click', closeStats);
+document.getElementById('statsRefresh').addEventListener('click', loadStats);
+statsBackdrop.addEventListener('click', closeStats);
+
+window.addEventListener('keydown', e => {
+  if (e.key !== 'Escape') return;
+  if (infoModal.classList.contains('open')) closeInfo();
+  if (statsModal.classList.contains('open')) closeStats();
+});
 
 load();
 refreshDownloads(); // resume any in-flight downloads on page load

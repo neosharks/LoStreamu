@@ -6,6 +6,7 @@ import { dirname, join, extname, basename } from 'path';
 import fs from 'fs';
 import { execFile, spawn } from 'child_process';
 import crypto from 'crypto';
+import os from 'os';
 import { ensureSecrets } from './secrets.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -96,6 +97,120 @@ function ensureThumb(item) {
         (e) => resolve(fs.existsSync(out) ? out : null));
     });
   });
+}
+
+// ---------------------------------------------------------------------------
+// Per-video metadata (ffprobe) — cached on disk, refreshed when files change.
+// ---------------------------------------------------------------------------
+const META_CACHE_PATH = join(__dirname, 'meta-cache.json');
+let metaCache = {};
+try { if (fs.existsSync(META_CACHE_PATH)) metaCache = JSON.parse(fs.readFileSync(META_CACHE_PATH, 'utf8')); } catch {}
+let metaSaveTimer = null;
+function saveMetaCache() {
+  clearTimeout(metaSaveTimer);
+  metaSaveTimer = setTimeout(() => {
+    try { fs.writeFileSync(META_CACHE_PATH, JSON.stringify(metaCache)); } catch {}
+  }, 800);
+  metaSaveTimer.unref?.();
+}
+
+function evalFps(r) { const [n, d] = String(r).split('/').map(Number); return d ? Math.round((n / d) * 100) / 100 : 0; }
+
+function probe(item) {
+  return new Promise((resolve) => {
+    execFile('ffprobe', ['-v', 'error', '-print_format', 'json', '-show_format', '-show_streams', item.full],
+      { maxBuffer: 8 * 1024 * 1024 }, (err, stdout) => {
+        if (err) return resolve(null);
+        try {
+          const j = JSON.parse(stdout);
+          const v = (j.streams || []).find(s => s.codec_type === 'video') || {};
+          const a = (j.streams || []).find(s => s.codec_type === 'audio') || {};
+          const fmt = j.format || {};
+          resolve({
+            duration: Math.round(parseFloat(fmt.duration) || parseFloat(v.duration) || 0),
+            width: v.width || 0, height: v.height || 0,
+            vcodec: v.codec_name || '', acodec: a.codec_name || '',
+            bitrate: parseInt(fmt.bit_rate, 10) || 0,
+            fps: v.r_frame_rate ? evalFps(v.r_frame_rate) : 0
+          });
+        } catch { resolve(null); }
+      });
+  });
+}
+
+// Full metadata via the cache; probes on a miss or when the file changed.
+async function getMeta(item) {
+  let st; try { st = fs.statSync(item.full); } catch { return null; }
+  const base = { size: st.size, addedAt: st.mtimeMs };
+  const c = metaCache[item.id];
+  if (c && c.mtimeMs === st.mtimeMs && c.duration != null)
+    return { ...base, duration: c.duration, width: c.width, height: c.height,
+             vcodec: c.vcodec, acodec: c.acodec, bitrate: c.bitrate, fps: c.fps };
+  const p = await probe(item);
+  if (p) { metaCache[item.id] = { mtimeMs: st.mtimeMs, ...p }; saveMetaCache(); return { ...base, ...p }; }
+  return base;
+}
+
+// Cheap fields for listings; includes probe data only if already cached.
+function quickMeta(item) {
+  let st; try { st = fs.statSync(item.full); } catch { return {}; }
+  const c = (metaCache[item.id] && metaCache[item.id].mtimeMs === st.mtimeMs) ? metaCache[item.id] : null;
+  return {
+    size: st.size, addedAt: st.mtimeMs,
+    duration: c ? c.duration : null, width: c ? c.width : null, height: c ? c.height : null
+  };
+}
+
+// Fill in any missing metadata in the background after a scan (one at a time).
+let metaBuilding = false;
+async function buildMeta() {
+  if (metaBuilding) return;
+  metaBuilding = true;
+  try {
+    for (const item of library) {
+      let st; try { st = fs.statSync(item.full); } catch { continue; }
+      const c = metaCache[item.id];
+      if (c && c.mtimeMs === st.mtimeMs && c.duration != null) continue;
+      await getMeta(item);
+    }
+  } finally { metaBuilding = false; }
+}
+buildMeta().catch(() => {});
+
+// ---------------------------------------------------------------------------
+// Server usage stats (cached briefly — these calls hit the filesystem).
+// ---------------------------------------------------------------------------
+let statsCache = null, statsCacheAt = 0;
+function diskInfo(p) {
+  try {
+    const s = fs.statfsSync(p);
+    const total = s.blocks * s.bsize, free = s.bavail * s.bsize;
+    return { total, free, used: total - free };
+  } catch { return null; }
+}
+function libraryBytes() {
+  let total = 0;
+  for (const item of library) { try { total += fs.statSync(item.full).size; } catch {} }
+  return total;
+}
+function buildStats() {
+  const now = Date.now();
+  if (statsCache && now - statsCacheAt < 5000) return statsCache;
+  const mem = { total: os.totalmem(), free: os.freemem() }; mem.used = mem.total - mem.free;
+  const active = [...downloads.values()].filter(j => ['starting', 'downloading', 'processing'].includes(j.status)).length;
+  statsCache = {
+    videos: library.length,
+    libraryBytes: libraryBytes(),
+    disk: diskInfo(config.mediaDir),
+    mem,
+    cpu: { count: os.cpus().length, load: os.loadavg() },
+    uptime: { process: process.uptime(), system: os.uptime() },
+    activeDownloads: active,
+    node: process.version,
+    platform: os.platform() + ' ' + os.release()
+  };
+  statsCacheAt = now;
+  return statsCache;
 }
 
 // ---------------------------------------------------------------------------
@@ -289,6 +404,7 @@ function startDownload(url) {
     } else if (code === 0) {
       job.status = 'done'; job.percent = 100; job.message = 'Saved to your library';
       rescan();
+      buildMeta().catch(() => {});
       emit(id);
     } else {
       job.status = 'error';
@@ -393,10 +509,32 @@ app.post('/api/change-password', requireAuth, (req, res) => {
 
 // Library listing
 app.get('/api/videos', requireAuth, (req, res) => {
-  res.json(library.map(v => ({ id: v.id, name: v.name })));
+  res.json(library.map(v => ({ id: v.id, name: v.name, ...quickMeta(v) })));
 });
 
-app.post('/api/rescan', requireAuth, (req, res) => res.json({ count: rescan().length }));
+// Full metadata for one video (resolution, codecs, bitrate, fps, size…).
+app.get('/api/videos/:id/info', requireAuth, async (req, res) => {
+  const item = library.find(v => v.id === req.params.id);
+  if (!item) return res.status(404).end();
+  const meta = await getMeta(item);
+  res.json({ id: item.id, name: item.name, ext: extname(item.full).slice(1).toLowerCase(), ...meta });
+});
+
+// Download the original file to the client.
+app.get('/api/videos/:id/download', requireAuth, (req, res) => {
+  const item = library.find(v => v.id === req.params.id);
+  if (!item) return res.status(404).end();
+  res.download(item.full, item.name + extname(item.full));
+});
+
+// Overall server usage.
+app.get('/api/stats', requireAuth, (req, res) => res.json(buildStats()));
+
+app.post('/api/rescan', requireAuth, (req, res) => {
+  const count = rescan().length;
+  buildMeta().catch(() => {});
+  res.json({ count });
+});
 
 // Thumbnails (generated on demand, cached)
 app.get('/thumb/:id', requireAuth, async (req, res) => {
