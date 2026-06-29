@@ -12,6 +12,7 @@ SRC="app"
 tar -czf "$OUT" \
   --exclude='./node_modules' \
   --exclude='./config.json' \
+  --exclude='./secrets.json' \
   --exclude='./server.log' \
   --exclude='./cookies.txt' \
   --exclude='./.git' \

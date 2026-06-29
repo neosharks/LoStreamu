@@ -1,6 +1,7 @@
 # App runtime — never commit these
 app/node_modules/
 app/config.json
+app/secrets.json
 app/server.log
 app/cookies.txt
 app/media/*

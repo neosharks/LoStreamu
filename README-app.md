@@ -71,7 +71,6 @@ Supported containers: mp4, mkv, webm, mov, avi, m4v, ts, m2ts, 3gp, ogv, and mor
   "email": "",
   "passwordHash": "",
   "mediaDir": "/absolute/path/to/media",
-  "sessionSecret": "<random>",
   "updateUrl": "https://raw.githubusercontent.com/thakursat/hosted-video-streamer/main/streamvault-app.tar.gz"
 }
 ```
@@ -80,6 +79,21 @@ Supported containers: mp4, mkv, webm, mov, avi, m4v, ts, m2ts, 3gp, ogv, and mor
 screen (or `npm run set-password`). `updateUrl` is the tarball the in-app
 **Update** button pulls from — override it (or set the `SV_UPDATE_URL` env var)
 if you fork the repo.
+
+### Secrets
+
+The session signing key (and any future tokens) live in **`secrets.json`**, not
+in `config.json` and never in git. They're generated at deploy time:
+
+```bash
+npm run gen-secrets            # create secrets.json if missing (idempotent)
+npm run gen-secrets -- --rotate  # force fresh keys (signs everyone out)
+```
+
+The server also generates them on first start if they're missing, and a legacy
+`sessionSecret` already in `config.json` is migrated over automatically. The file
+is written `0600`; keep it out of backups you share. `secrets.json` and
+`config.json` are both preserved across in-app updates.
 
 Point `mediaDir` anywhere — e.g. an external drive or an existing library
 folder. Thumbnails are cached in `thumbnails/` keyed by file path.

@@ -6,6 +6,7 @@ import { dirname, join, extname, basename } from 'path';
 import fs from 'fs';
 import { execFile, spawn } from 'child_process';
 import crypto from 'crypto';
+import { ensureSecrets } from './secrets.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -22,7 +23,7 @@ function loadConfig() {
       email: '',
       passwordHash: '',
       mediaDir: join(__dirname, 'media'),
-      sessionSecret: crypto.randomBytes(32).toString('hex'),
+      // Secrets are NOT stored here — see secrets.json (generated at deploy time).
       // Tarball the in-app "Update" button pulls from. Override per fork.
       updateUrl: 'https://raw.githubusercontent.com/thakursat/hosted-video-streamer/main/streamvault-app.tar.gz'
     };
@@ -34,6 +35,8 @@ function loadConfig() {
 }
 
 const config = loadConfig();
+// Session signing key etc. — generated at deploy/first-run, kept out of git.
+const secrets = ensureSecrets();
 function saveConfig() { fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2)); }
 function hasAccount() { return !!(config.email && config.passwordHash); }
 // Lenient — allows local addresses like "you@local" on a private server.
@@ -325,7 +328,7 @@ const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(session({
-  secret: config.sessionSecret,
+  secret: secrets.sessionSecret,
   resave: false,
   saveUninitialized: false,
   cookie: { httpOnly: true, sameSite: 'lax', maxAge: 1000 * 60 * 60 * 24 * 7 }

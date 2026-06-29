@@ -6,7 +6,8 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "set-password": "node set-password.js"
+    "set-password": "node set-password.js",
+    "gen-secrets": "node gen-secrets.js"
   },
   "dependencies": {
     "express": "^4.21.2",

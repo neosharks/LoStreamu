@@ -62,6 +62,10 @@ if ! id "$SVC_USER" >/dev/null 2>&1; then
   useradd --system --no-create-home --shell /usr/sbin/nologin "$SVC_USER"
 fi
 
+# Generate fresh secrets (session key etc.) at deploy time — never from git.
+echo "==> Generating secrets..."
+node gen-secrets.js
+
 # Generate config.json on first run if missing
 if [ ! -f "$APP_DIR/config.json" ]; then
   echo "==> Generating initial config.json..."

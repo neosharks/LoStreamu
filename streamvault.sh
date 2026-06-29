@@ -178,6 +178,9 @@ msg_ok "StreamVault deployed"
 
 msg_info "Creating service user and systemd unit"
 run "id streamvault >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin streamvault"
+# Generate fresh secrets (session key etc.) at deploy time — never from git.
+run "cd /opt/streamvault && node gen-secrets.js" \
+  || die "Secret generation failed."
 # Generate config.json on first run, then chown.
 run "cd /opt/streamvault && (node server.js & SV=\$!; sleep 2; kill \$SV 2>/dev/null; wait \$SV 2>/dev/null; true)"
 run "mkdir -p /opt/streamvault/media /opt/streamvault/thumbnails && chown -R streamvault:streamvault /opt/streamvault"
