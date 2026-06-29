@@ -1,0 +1,23 @@
+[Unit]
+Description=StreamVault video streaming server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Runs as an unprivileged service account created by install-lxc.sh
+User=streamvault
+Group=streamvault
+WorkingDirectory=/opt/streamvault
+ExecStart=/usr/bin/node /opt/streamvault/server.js
+Restart=on-failure
+RestartSec=3
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=full
+PrivateTmp=true
+# Allow writing thumbnails + reading the media dir under /opt/streamvault
+ReadWritePaths=/opt/streamvault
+
+[Install]
+WantedBy=multi-user.target

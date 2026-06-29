@@ -1,0 +1,17 @@
+{
+  "name": "streamvault",
+  "version": "1.0.0",
+  "description": "Lightweight self-hosted, auth-gated video streaming server",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "set-password": "node set-password.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "express-session": "^1.18.1",
+    "bcryptjs": "^2.4.3",
+    "cookie-parser": "^1.4.7"
+  }
+}

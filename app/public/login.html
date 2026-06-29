@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>StreamVault — Sign in</title>
+<style>
+  :root {
+    --bg: #0c0d10;
+    --panel: #15171c;
+    --line: #24272f;
+    --text: #e9eaed;
+    --muted: #8a8f9a;
+    --accent: #f0b429;
+    --accent-dim: #b8881f;
+    --danger: #e5484d;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    min-height: 100vh;
+    display: flex; align-items: center; justify-content: center;
+    padding: 24px;
+  }
+  .card {
+    width: 100%; max-width: 380px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 40px 32px;
+  }
+  .brand {
+    display: flex; align-items: center; gap: 10px;
+    margin-bottom: 6px;
+  }
+  .mark {
+    width: 28px; height: 28px; border-radius: 7px;
+    background: var(--accent);
+    display: grid; place-items: center;
+    color: #1a1300;
+  }
+  .mark svg { width: 16px; height: 16px; }
+  h1 { font-size: 1.25rem; font-weight: 650; letter-spacing: -0.01em; }
+  .sub { color: var(--muted); font-size: 0.85rem; margin: 14px 0 28px; }
+  label { display: block; font-size: 0.78rem; color: var(--muted); margin-bottom: 7px; letter-spacing: 0.02em; }
+  input {
+    width: 100%;
+    background: #0e0f13;
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    color: var(--text);
+    padding: 11px 13px;
+    font-size: 0.95rem;
+    margin-bottom: 18px;
+    transition: border-color .15s;
+  }
+  input:focus { outline: none; border-color: var(--accent-dim); }
+  button {
+    width: 100%;
+    background: var(--accent);
+    color: #1a1300;
+    border: none;
+    border-radius: 9px;
+    padding: 12px;
+    font-size: 0.95rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: filter .15s;
+  }
+  button:hover { filter: brightness(1.06); }
+  .err {
+    background: rgba(229,72,77,.12);
+    border: 1px solid rgba(229,72,77,.35);
+    color: #ff9b9e;
+    font-size: 0.82rem;
+    padding: 9px 12px;
+    border-radius: 8px;
+    margin-bottom: 18px;
+    display: none;
+  }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="brand">
+      <div class="mark"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></div>
+      <h1>StreamVault</h1>
+    </div>
+    <p class="sub">Sign in to reach your library.</p>
+    <div class="err" id="err"></div>
+    <label for="email">Email</label>
+    <input id="email" type="email" autocomplete="username" placeholder="you@local">
+    <label for="password">Password</label>
+    <input id="password" type="password" autocomplete="current-password" placeholder="••••••••">
+    <button id="go">Sign in</button>
+  </div>
+<script>
+  const err = document.getElementById('err');
+  async function submit() {
+    err.style.display = 'none';
+    const email = document.getElementById('email').value.trim();
+    const password = document.getElementById('password').value;
+    const r = await fetch('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password })
+    });
+    if (r.ok) { location.href = '/'; }
+    else {
+      const d = await r.json().catch(() => ({}));
+      err.textContent = d.error || 'Sign in failed.';
+      err.style.display = 'block';
+    }
+  }
+  document.getElementById('go').addEventListener('click', submit);
+  document.querySelectorAll('input').forEach(i =>
+    i.addEventListener('keydown', e => { if (e.key === 'Enter') submit(); }));
+</script>
+</body>
+</html>
