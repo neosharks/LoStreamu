@@ -127,6 +127,67 @@
   .empty { color: var(--muted); text-align: center; padding: 90px 20px; }
   .empty code { background: var(--panel-2); padding: 2px 7px; border-radius: 5px; color: var(--accent); }
 
+  /* Two-pane layout */
+  .layout { display: flex; align-items: stretch; max-width: 1680px; margin: 0 auto; }
+  .sidebar { flex: 0 0 250px; border-right: 1px solid var(--line); padding: 16px 10px 40px;
+    position: sticky; top: 61px; align-self: flex-start; height: calc(100vh - 61px); overflow-y: auto; }
+  .sb-head { display: flex; align-items: center; justify-content: space-between; padding: 0 8px 8px; }
+  .sb-head .t { font-size: .72rem; text-transform: uppercase; letter-spacing: .06em; color: var(--faint); font-weight: 700; }
+  .sb-add { background: none; border: none; color: var(--muted); cursor: pointer; width: 26px; height: 26px;
+    border-radius: 7px; display: grid; place-items: center; }
+  .sb-add:hover { background: var(--panel-2); color: var(--text); }
+  .sb-add svg { width: 16px; height: 16px; }
+  .folder { display: flex; align-items: center; gap: 6px; padding: 7px 8px; border-radius: 8px; cursor: pointer;
+    color: var(--muted); font-size: .86rem; user-select: none; }
+  .folder:hover { background: var(--panel-2); color: var(--text); }
+  .folder.active { background: var(--panel-3); color: var(--text); }
+  .folder .caret { width: 14px; height: 14px; flex: 0 0 auto; color: var(--faint); transition: transform .12s; }
+  .folder .caret.hidden { visibility: hidden; }
+  .folder.collapsed .caret { transform: rotate(-90deg); }
+  .folder .ficon { width: 16px; height: 16px; flex: 0 0 auto; color: var(--accent); opacity: .85; }
+  .folder .fname { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .folder .cnt { font-size: .72rem; color: var(--faint); font-variant-numeric: tabular-nums; }
+  .folder .facts { display: none; gap: 1px; }
+  .folder:hover .facts { display: flex; }
+  .folder:hover .cnt { display: none; }
+  .fact { width: 22px; height: 22px; border: none; background: none; color: var(--faint); cursor: pointer;
+    border-radius: 6px; display: grid; place-items: center; }
+  .fact:hover { background: rgba(255,255,255,.12); color: var(--text); }
+  .fact svg { width: 13px; height: 13px; }
+
+  .content { flex: 1; min-width: 0; padding: 20px 24px 60px; }
+  .crumbs { display: flex; align-items: center; gap: 6px; font-size: .92rem; color: var(--muted); margin-bottom: 16px; flex-wrap: wrap; }
+  .crumbs a { color: var(--muted); cursor: pointer; }
+  .crumbs a:hover { color: var(--text); }
+  .crumbs .sep { color: var(--faint); }
+  .crumbs .cur { color: var(--text); font-weight: 650; }
+
+  /* Bulk-select toolbar */
+  .bulkbar { display: none; align-items: center; gap: 10px; background: var(--panel-2); border: 1px solid var(--line-2);
+    border-radius: 12px; padding: 9px 12px; margin-bottom: 16px; position: sticky; top: 73px; z-index: 8; }
+  .bulkbar.show { display: flex; }
+  .bulkbar .n { font-weight: 650; }
+  .bulkbar .sp { flex: 1; }
+  .btn-danger { color: #ff6b6e; border-color: rgba(255,107,110,.4); }
+  .btn-danger:hover { background: rgba(255,107,110,.12); border-color: rgba(255,107,110,.6); }
+
+  /* Card selection */
+  .card-check { position: absolute; top: 8px; left: 8px; width: 24px; height: 24px; border-radius: 7px;
+    background: rgba(12,13,16,.7); border: 2px solid rgba(255,255,255,.55); cursor: pointer; z-index: 3;
+    display: grid; place-items: center; opacity: 0; transition: opacity .15s; backdrop-filter: blur(3px); }
+  .card:hover .card-check, .card.sel .card-check { opacity: 1; }
+  .card.sel .card-check { background: var(--accent); border-color: var(--accent); }
+  .card-check svg { width: 15px; height: 15px; color: var(--accent-ink); opacity: 0; }
+  .card.sel .card-check svg { opacity: 1; }
+  .card.sel { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+
+  /* Folder select (download + move dialogs) */
+  .fld-select { width: 100%; background: #0e0f13; border: 1px solid var(--line); border-radius: 9px;
+    color: var(--text); padding: 10px 12px; font-size: .9rem; }
+  .fld-select:focus { outline: none; border-color: var(--accent); }
+  .dl-check { display: flex; align-items: center; gap: 9px; margin-top: 14px; font-size: .86rem; color: var(--muted); cursor: pointer; }
+  .dl-check input { width: 16px; height: 16px; accent-color: var(--accent); }
+
   /* Base icon button (used by modal close buttons + player overlay) */
   .iconbtn { background: rgba(255,255,255,.08); border: none; color: var(--text);
     width: 40px; height: 40px; border-radius: 50%; cursor: pointer;
@@ -344,11 +405,14 @@
       </button>
     </div>
     <div class="dl-body">
-      <p class="dl-hint">Paste a video link — direct file, m3u8/HLS stream, or any site yt-dlp supports. Each download is saved under a random name.</p>
+      <p class="dl-hint">Paste a video or playlist link — YouTube, and most sites yt-dlp supports. Playlists download into their own folder; re-pasting a link skips items you already have.</p>
       <div class="dl-input-row">
-        <input id="dlUrl" type="url" placeholder="https://server.example.com/videos/stream/master.m3u8?token=…">
+        <input id="dlUrl" type="url" placeholder="https://www.youtube.com/playlist?list=…">
         <button class="btn btn-primary" id="dlStart">Download</button>
       </div>
+      <label class="fld-label" for="dlFolder" style="margin-top:14px">Save to folder</label>
+      <select class="fld-select" id="dlFolder"></select>
+      <label class="dl-check"><input type="checkbox" id="dlPlaylist"> Download entire playlist (into its own subfolder)</label>
       <div class="dl-err" id="dlErr"></div>
       <div class="dl-list" id="dlList"></div>
     </div>
@@ -425,12 +489,46 @@
     <div class="dl-body" id="statsBody"></div>
   </div>
 
-  <main>
-    <div class="grid" id="grid"></div>
-    <div class="empty" id="empty" style="display:none">
-      No videos yet. Drop files into your media folder and press <strong>Rescan</strong>.
+  <!-- Move-to-folder dialog -->
+  <div class="dl-backdrop" id="moveBackdrop"></div>
+  <div class="dl-modal" id="moveModal" role="dialog" aria-modal="true" aria-label="Move videos" style="width:420px">
+    <div class="dl-head">
+      <h2 id="moveTitle">Move videos</h2>
+      <button class="iconbtn sm" id="moveClose" title="Close">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
     </div>
-  </main>
+    <div class="dl-body">
+      <label class="fld-label" for="moveFolder">Destination folder</label>
+      <select class="fld-select" id="moveFolder"></select>
+      <div class="dl-err" id="moveErr"></div>
+      <button class="btn btn-primary" id="moveGo" style="width:100%;margin-top:14px">Move here</button>
+    </div>
+  </div>
+
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="sb-head">
+        <span class="t">Folders</span>
+        <button class="sb-add" id="newFolder" title="New folder">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2zM12 11v4M10 13h4"/></svg>
+        </button>
+      </div>
+      <div id="tree"></div>
+    </aside>
+    <section class="content">
+      <div class="crumbs" id="crumbs"></div>
+      <div class="bulkbar" id="bulkbar">
+        <span class="n" id="selCount">0 selected</span>
+        <span class="sp"></span>
+        <button class="btn" id="selMove">Move…</button>
+        <button class="btn btn-danger" id="selDelete">Delete</button>
+        <button class="btn" id="selClear">Clear</button>
+      </div>
+      <div class="grid" id="grid"></div>
+      <div class="empty" id="empty" style="display:none"></div>
+    </section>
+  </div>
 
   <div class="player" id="player">
     <span class="player-title" id="ptitle"></span>
@@ -447,37 +545,109 @@
 const grid = document.getElementById('grid');
 const empty = document.getElementById('empty');
 const countEl = document.getElementById('count');
-let videos = [];
+const treeEl = document.getElementById('tree');
+const crumbsEl = document.getElementById('crumbs');
+const bulkbar = document.getElementById('bulkbar');
+let videos = [];           // videos in the current folder
 let current = -1;
+let query = '';
+let currentFolder = '';    // '' = root
+let tree = { name: 'All videos', path: '', children: [], total: 0, videoCount: 0 };
+const collapsed = new Set();
+const selected = new Set();
 
-async function load() {
-  const r = await fetch('/api/videos');
+function escapeHtml(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+async function load() { await Promise.all([loadTree(), loadFolder()]); }
+
+async function loadTree() {
+  const r = await fetch('/api/tree');
   if (r.status === 401) { location.href = '/login'; return; }
-  videos = await r.json();
-  render();
+  tree = await r.json();
+  renderTree();
+  countEl.textContent = tree.total ? tree.total + (tree.total === 1 ? ' video' : ' videos') : '';
 }
 
-let query = '';
+async function loadFolder() {
+  const r = await fetch('/api/videos?folder=' + encodeURIComponent(currentFolder));
+  if (r.status === 401) { location.href = '/login'; return; }
+  videos = await r.json();
+  selected.clear(); updateBulk();
+  renderCrumbs(); render();
+}
 
+function selectFolder(path) {
+  currentFolder = path; query = ''; document.getElementById('search').value = '';
+  loadFolder(); renderTree();
+}
+
+// ---- Sidebar tree ----
+function renderTree() {
+  treeEl.innerHTML = '';
+  const walk = (node, depth) => {
+    const isRoot = node.path === '';
+    const hasChildren = node.children && node.children.length;
+    const row = document.createElement('div');
+    row.className = 'folder' + (node.path === currentFolder ? ' active' : '') + (collapsed.has(node.path) ? ' collapsed' : '');
+    row.style.paddingLeft = (8 + depth * 14) + 'px';
+    row.innerHTML = `
+      <svg class="caret ${hasChildren ? '' : 'hidden'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg>
+      <svg class="ficon" viewBox="0 0 24 24" fill="currentColor"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+      <span class="fname">${escapeHtml(node.name)}</span>
+      <span class="cnt">${node.total || ''}</span>
+      ${isRoot ? '' : `<span class="facts">
+        <button class="fact" data-fact="rename" title="Rename"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20h4L18 10l-4-4L4 16zM14 6l4 4"/></svg></button>
+        <button class="fact" data-fact="delete" title="Delete"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13"/></svg></button>
+      </span>`}`;
+    row.addEventListener('click', (e) => {
+      const fact = e.target.closest('[data-fact]');
+      if (fact) { e.stopPropagation(); fact.dataset.fact === 'rename' ? renameFolder(node) : deleteFolder(node); return; }
+      const caret = e.target.closest('.caret');
+      if (caret && hasChildren) { e.stopPropagation(); collapsed.has(node.path) ? collapsed.delete(node.path) : collapsed.add(node.path); renderTree(); return; }
+      selectFolder(node.path);
+    });
+    treeEl.appendChild(row);
+    if (hasChildren && !collapsed.has(node.path)) node.children.forEach(c => walk(c, depth + 1));
+  };
+  walk(tree, 0);
+}
+
+function renderCrumbs() {
+  const parts = currentFolder ? currentFolder.split('/') : [];
+  let acc = '';
+  const segs = ['<a data-path="">All videos</a>'];
+  parts.forEach((p, i) => {
+    acc = acc ? acc + '/' + p : p;
+    segs.push('<span class="sep">/</span>');
+    segs.push(i === parts.length - 1 ? `<span class="cur">${escapeHtml(p)}</span>` : `<a data-path="${escapeHtml(acc)}">${escapeHtml(p)}</a>`);
+  });
+  crumbsEl.innerHTML = segs.join(' ');
+  crumbsEl.querySelectorAll('a[data-path]').forEach(a => a.addEventListener('click', () => selectFolder(a.dataset.path)));
+}
+
+// ---- Grid ----
 function render() {
-  countEl.textContent = videos.length ? videos.length + (videos.length === 1 ? ' video' : ' videos') : '';
   grid.innerHTML = '';
-  const list = videos.map((v, i) => ({ v, i })).filter(({ v }) => v.name.toLowerCase().includes(query));
-  if (!videos.length) { empty.innerHTML = 'No videos yet. Use <strong>+ Add videos</strong> to download by link, or drop files in your media folder and rescan.'; empty.style.display = 'block'; }
+  const list = videos.filter(v => v.name.toLowerCase().includes(query));
+  if (!videos.length) { empty.innerHTML = (currentFolder ? 'This folder is empty. ' : 'No videos yet. ') + 'Use <strong>+ Add videos</strong> to download by link, or drop files in and rescan.'; empty.style.display = 'block'; }
   else if (!list.length) { empty.innerHTML = 'No matches for “' + escapeHtml(query) + '”.'; empty.style.display = 'block'; }
   else empty.style.display = 'none';
 
-  list.forEach(({ v, i }) => {
+  list.forEach(v => {
+    const i = videos.indexOf(v);
     const card = document.createElement('div');
-    card.className = 'card';
+    card.className = 'card' + (selected.has(v.id) ? ' sel' : '');
     const res = v.height ? v.height + 'p' : '';
     const sub = [res, humanSize(v.size)].filter(Boolean);
     card.innerHTML = `
       <div class="thumb" style="background-image:url('/thumb/${v.id}')">
         <div class="ph"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 4h16v16H4zM9 9l6 3-6 3z"/></svg></div>
+        <div class="card-check" data-act="check"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 12l5 5 9-10"/></svg></div>
         <div class="card-actions">
           <button class="cardbtn" data-act="info" title="Info"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 7.5v.5"/></svg></button>
+          <button class="cardbtn" data-act="rename" title="Rename"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20h4L18 10l-4-4L4 16zM14 6l4 4"/></svg></button>
           <button class="cardbtn" data-act="dl" title="Download"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg></button>
+          <button class="cardbtn" data-act="del" title="Delete"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13"/></svg></button>
         </div>
         ${v.duration ? `<span class="badge dur">${fmtDur(v.duration)}</span>` : ''}
         <div class="play"><div><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></div></div>
@@ -491,8 +661,18 @@ function render() {
     img.src = '/thumb/' + v.id;
     card.addEventListener('click', (e) => {
       const act = e.target.closest('[data-act]');
-      if (act) { e.stopPropagation(); act.dataset.act === 'info' ? openInfo(v.id) : downloadVideo(v.id); return; }
-      playIndex(i);
+      if (act) {
+        e.stopPropagation();
+        const a = act.dataset.act;
+        if (a === 'check') toggleSelect(v.id);
+        else if (a === 'info') openInfo(v.id);
+        else if (a === 'dl') downloadVideo(v.id);
+        else if (a === 'rename') renameVideo(v);
+        else if (a === 'del') deleteVideos([v.id]);
+        return;
+      }
+      if (selected.size) toggleSelect(v.id);   // in selection mode, click toggles
+      else playIndex(i);
     });
     grid.appendChild(card);
   });
@@ -500,9 +680,86 @@ function render() {
 
 function downloadVideo(id) { window.location.href = '/api/videos/' + id + '/download'; }
 
-document.getElementById('search').addEventListener('input', e => { query = e.target.value.trim().toLowerCase(); render(); });
+// ---- Selection + bulk actions ----
+function toggleSelect(id) { selected.has(id) ? selected.delete(id) : selected.add(id); render(); updateBulk(); }
+function updateBulk() {
+  document.getElementById('selCount').textContent = selected.size + ' selected';
+  bulkbar.classList.toggle('show', selected.size > 0);
+}
+document.getElementById('selClear').addEventListener('click', () => { selected.clear(); render(); updateBulk(); });
+document.getElementById('selDelete').addEventListener('click', () => deleteVideos([...selected]));
+document.getElementById('selMove').addEventListener('click', () => openMove([...selected]));
 
-function escapeHtml(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+// ---- Video actions ----
+async function renameVideo(v) {
+  const name = prompt('Rename video', v.name);
+  if (name == null || !name.trim() || name.trim() === v.name) return;
+  const r = await fetch('/api/videos/' + v.id, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: name.trim() }) });
+  if (!r.ok) { const d = await r.json().catch(() => ({})); alert(d.error || 'Rename failed.'); return; }
+  load();
+}
+async function deleteVideos(ids) {
+  if (!ids.length) return;
+  if (!confirm(ids.length === 1 ? 'Delete this video? The file is removed from disk.' : `Delete ${ids.length} videos? The files are removed from disk.`)) return;
+  const r = await fetch('/api/videos', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }) });
+  if (!r.ok) { alert('Delete failed.'); return; }
+  selected.clear(); load();
+}
+
+// ---- Folder actions ----
+async function newFolderAction() {
+  const name = prompt('New folder name' + (currentFolder ? ' (inside ' + currentFolder + ')' : ''));
+  if (name == null || !name.trim()) return;
+  const r = await fetch('/api/folders', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ parent: currentFolder, name: name.trim() }) });
+  if (!r.ok) { const d = await r.json().catch(() => ({})); alert(d.error || 'Could not create folder.'); return; }
+  loadTree();
+}
+async function renameFolder(node) {
+  const name = prompt('Rename folder', node.name);
+  if (name == null || !name.trim() || name.trim() === node.name) return;
+  const r = await fetch('/api/folders', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: node.path, name: name.trim() }) });
+  if (!r.ok) { const d = await r.json().catch(() => ({})); alert(d.error || 'Rename failed.'); return; }
+  if (currentFolder === node.path || currentFolder.startsWith(node.path + '/')) currentFolder = '';
+  load();
+}
+async function deleteFolder(node) {
+  if (!confirm(`Delete folder “${node.name}” and its ${node.total} video(s)? This cannot be undone.`)) return;
+  const r = await fetch('/api/folders', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: node.path }) });
+  if (!r.ok) { const d = await r.json().catch(() => ({})); alert(d.error || 'Delete failed.'); return; }
+  if (currentFolder === node.path || currentFolder.startsWith(node.path + '/')) currentFolder = '';
+  load();
+}
+document.getElementById('newFolder').addEventListener('click', newFolderAction);
+
+// ---- Move dialog ----
+const moveModal = document.getElementById('moveModal');
+const moveBackdrop = document.getElementById('moveBackdrop');
+const moveFolder = document.getElementById('moveFolder');
+const moveErr = document.getElementById('moveErr');
+let moveIds = [];
+function flatFolders() {
+  const out = [];
+  const walk = (n, depth) => { out.push({ path: n.path, label: '  '.repeat(depth) + n.name }); (n.children || []).forEach(c => walk(c, depth + 1)); };
+  walk(tree, 0);
+  return out;
+}
+function openMove(ids) {
+  if (!ids.length) return;
+  moveIds = ids; moveErr.style.display = 'none';
+  document.getElementById('moveTitle').textContent = 'Move ' + ids.length + ' video' + (ids.length > 1 ? 's' : '');
+  moveFolder.innerHTML = flatFolders().map(f => `<option value="${escapeHtml(f.path)}">${f.path === '' ? 'All videos (root)' : escapeHtml(f.label)}</option>`).join('');
+  moveModal.classList.add('open'); moveBackdrop.classList.add('open');
+}
+function closeMove() { moveModal.classList.remove('open'); moveBackdrop.classList.remove('open'); }
+document.getElementById('moveClose').addEventListener('click', closeMove);
+moveBackdrop.addEventListener('click', closeMove);
+document.getElementById('moveGo').addEventListener('click', async () => {
+  const r = await fetch('/api/videos/move', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids: moveIds, folder: moveFolder.value }) });
+  if (!r.ok) { const d = await r.json().catch(() => ({})); moveErr.textContent = d.error || 'Move failed.'; moveErr.style.display = 'block'; return; }
+  closeMove(); selected.clear(); load();
+});
+
+document.getElementById('search').addEventListener('input', e => { query = e.target.value.trim().toLowerCase(); render(); });
 
 // ---- Player (Plyr) ----
 const player = document.getElementById('player');
@@ -615,8 +872,12 @@ function fmtDur(s) {
   return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(sec).padStart(2, '0');
 }
 
+const dlFolder = document.getElementById('dlFolder');
+const dlPlaylist = document.getElementById('dlPlaylist');
 function openModal() {
   dlModal.classList.add('open'); dlBackdrop.classList.add('open');
+  // Populate the destination folder list; default to the folder in view.
+  dlFolder.innerHTML = flatFolders().map(f => `<option value="${escapeHtml(f.path)}"${f.path === currentFolder ? ' selected' : ''}>${f.path === '' ? 'All videos (root)' : escapeHtml(f.label)}</option>`).join('');
   updateDock(); refreshDownloads();
   setTimeout(() => dlUrl.focus(), 60);
 }
@@ -637,7 +898,7 @@ async function startDownload() {
   if (!url) return;
   const r = await fetch('/api/download', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ url })
+    body: JSON.stringify({ url, folder: dlFolder.value, playlist: dlPlaylist.checked })
   });
   const d = await r.json().catch(() => ({}));
   if (!r.ok) { dlErr.textContent = d.error || 'Could not start download.'; dlErr.style.display = 'block'; return; }

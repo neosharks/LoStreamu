@@ -2,7 +2,7 @@ import express from 'express';
 import session from 'express-session';
 import bcrypt from 'bcryptjs';
 import { fileURLToPath } from 'url';
-import { dirname, join, extname, basename } from 'path';
+import { dirname, join, extname, basename, resolve, sep } from 'path';
 import fs from 'fs';
 import { execFile, spawn } from 'child_process';
 import crypto from 'crypto';
@@ -46,6 +46,25 @@ const THUMB_DIR = join(__dirname, 'thumbnails');
 if (!fs.existsSync(config.mediaDir)) fs.mkdirSync(config.mediaDir, { recursive: true });
 if (!fs.existsSync(THUMB_DIR)) fs.mkdirSync(THUMB_DIR, { recursive: true });
 
+// All file ops are confined to MEDIA_ROOT. safePath() maps a user-supplied
+// relative path to an absolute one and refuses anything that escapes the root.
+const MEDIA_ROOT = resolve(config.mediaDir);
+function safePath(rel) {
+  const abs = resolve(MEDIA_ROOT, String(rel || '').replace(/^[/\\]+/, ''));
+  if (abs !== MEDIA_ROOT && !abs.startsWith(MEDIA_ROOT + sep)) return null;
+  return abs;
+}
+// Remove now-empty directories from `dir` up to (but not including) MEDIA_ROOT.
+function pruneEmptyDirs(dir) {
+  let cur = resolve(dir);
+  while (cur !== MEDIA_ROOT && cur.startsWith(MEDIA_ROOT + sep)) {
+    let entries; try { entries = fs.readdirSync(cur); } catch { break; }
+    if (entries.length) break;
+    try { fs.rmdirSync(cur); } catch { break; }
+    cur = dirname(cur);
+  }
+}
+
 const VIDEO_EXT = new Set(['.mp4', '.mkv', '.webm', '.mov', '.avi', '.m4v', '.flv', '.wmv', '.mpg', '.mpeg', '.ts', '.m2ts', '.3gp', '.ogv']);
 
 const MIME = {
@@ -68,7 +87,8 @@ function walk(dir, base = dir, out = []) {
     if (entry.isDirectory()) walk(full, base, out);
     else if (VIDEO_EXT.has(extname(entry.name).toLowerCase())) {
       const rel = full.slice(base.length + 1);
-      out.push({ id: idFor(rel), rel, full, name: basename(entry.name, extname(entry.name)) });
+      const d = dirname(rel);
+      out.push({ id: idFor(rel), rel, full, name: basename(entry.name, extname(entry.name)), dir: d === '.' ? '' : d });
     }
   }
   return out;
@@ -80,6 +100,25 @@ function rescan() {
   return library;
 }
 rescan();
+
+// Folder tree under MEDIA_ROOT, with direct + total (recursive) video counts.
+function buildTree() {
+  const node = (abs, rel) => {
+    let entries = [];
+    try { entries = fs.readdirSync(abs, { withFileTypes: true }); } catch {}
+    const children = [];
+    let videoCount = 0;
+    for (const e of entries) {
+      if (e.name.startsWith('.')) continue;
+      if (e.isDirectory()) children.push(node(join(abs, e.name), rel ? rel + '/' + e.name : e.name));
+      else if (VIDEO_EXT.has(extname(e.name).toLowerCase())) videoCount++;
+    }
+    children.sort((a, b) => a.name.localeCompare(b.name));
+    const total = videoCount + children.reduce((s, c) => s + c.total, 0);
+    return { name: rel ? basename(rel) : 'All videos', path: rel, videoCount, total, children };
+  };
+  return node(MEDIA_ROOT, '');
+}
 
 function thumbPath(id) { return join(THUMB_DIR, id + '.jpg'); }
 
@@ -176,6 +215,15 @@ async function buildMeta() {
   } finally { metaBuilding = false; }
 }
 buildMeta().catch(() => {});
+
+// Drop cached thumbnail / sprite / VTT / metadata for a video id (after a
+// delete, rename, or move — its id is derived from the relative path).
+function cleanupArtifacts(id) {
+  for (const p of [thumbPath(id), join(THUMB_DIR, id + '.sprite.jpg'), join(THUMB_DIR, id + '.vtt')]) {
+    try { fs.rmSync(p, { force: true }); } catch {}
+  }
+  if (metaCache[id]) { delete metaCache[id]; saveMetaCache(); }
+}
 
 // ---------------------------------------------------------------------------
 // Scrub-preview sprites — a tiled JPEG of frames + a WebVTT mapping time →
@@ -291,8 +339,26 @@ function jobView(job) {
     duration: job.duration || 0,
     downloadedBytes: job.downloadedBytes || 0,
     totalBytes: job.totalBytes || 0,
-    hasThumb: !!job.thumbUrl
+    hasThumb: !!job.thumbUrl,
+    folder: job.folderRel || '',
+    playlist: !!job.playlist,
+    playlistIndex: job.playlistIndex || 0,
+    playlistCount: job.playlistCount || 0
   };
+}
+
+// Flat playlist probe — title + entry count, no per-video metadata.
+function fetchPlaylistMeta(url) {
+  return new Promise((resolve) => {
+    execFile('yt-dlp', ['-J', '--flat-playlist', '--no-warnings', '--no-progress', url],
+      { maxBuffer: 64 * 1024 * 1024, timeout: 45000 }, (err, stdout) => {
+        if (err) return resolve(null);
+        try {
+          const j = JSON.parse(stdout);
+          resolve({ title: j.title || j.playlist_title || 'Playlist', count: Array.isArray(j.entries) ? j.entries.length : 0 });
+        } catch { resolve(null); }
+      });
+  });
 }
 
 function emit(jobId) {
@@ -329,43 +395,52 @@ function fetchMeta(url) {
   });
 }
 
-function startDownload(url) {
+function startDownload(url, { folder = '', playlist = false } = {}) {
   const id = randToken(8);
-  // Random folder + random filename. yt-dlp keeps the source extension via %(ext)s.
-  const folderName = randToken(16);
-  const folder = join(config.mediaDir, folderName);
-  fs.mkdirSync(folder, { recursive: true });
-  const fileBase = randToken(20);
-  const outTemplate = join(folder, `${fileBase}.%(ext)s`);
+  // Resolve the destination folder (created if missing); default = media root.
+  const destAbs = safePath(folder) || MEDIA_ROOT;
+  fs.mkdirSync(destAbs, { recursive: true });
+  // A per-folder archive lets re-pasting a link skip already-downloaded items.
+  const archive = join(destAbs, '.downloaded.txt');
+  // yt-dlp builds folders from the template; forward slashes work cross-platform.
+  const outTemplate = playlist
+    ? `${destAbs}/%(playlist_title,playlist_id|Playlist)s/%(playlist_index)03d - %(title).180B [%(id)s].%(ext)s`
+    : `${destAbs}/%(title).200B [%(id)s].%(ext)s`;
 
   const job = {
     id, status: 'starting', percent: 0, speed: '', eta: '',
-    message: 'Preparing download…', folder, url,
+    message: playlist ? 'Reading playlist…' : 'Preparing download…',
+    url, folderRel: folder, destAbs, playlist,
+    playlistIndex: 0, playlistCount: 0, itemPercent: 0,
     title: '', uploader: '', duration: 0,
     downloadedBytes: 0, totalBytes: 0,
     thumbUrl: '', thumbBuf: null, thumbType: ''
   };
   downloads.set(id, job);
 
-  // Probe title / thumbnail / duration in the background and stream it to the UI.
-  fetchMeta(url).then(meta => {
-    if (!meta || job.status === 'cancelled' || job.status === 'done' || job.status === 'error') return;
-    job.title = meta.title; job.uploader = meta.uploader;
-    job.duration = meta.duration; job.thumbUrl = meta.thumbUrl;
-    if (!job.totalBytes && meta.totalBytes) job.totalBytes = meta.totalBytes;
-    emit(id);
-  });
+  // Probe metadata in the background and stream it to the UI.
+  if (playlist) {
+    fetchPlaylistMeta(url).then(meta => {
+      if (!meta || ['cancelled', 'done', 'error'].includes(job.status)) return;
+      job.title = meta.title; job.playlistCount = meta.count || 0; emit(id);
+    });
+  } else {
+    fetchMeta(url).then(meta => {
+      if (!meta || ['cancelled', 'done', 'error'].includes(job.status)) return;
+      job.title = meta.title; job.uploader = meta.uploader;
+      job.duration = meta.duration; job.thumbUrl = meta.thumbUrl;
+      if (!job.totalBytes && meta.totalBytes) job.totalBytes = meta.totalBytes;
+      emit(id);
+    });
+  }
 
-  // --newline gives one progress line per update; --no-playlist keeps it to the
-  // single item unless the URL is explicitly a playlist (yt-dlp handles m3u8 too).
   // --progress-template emits machine-readable byte/speed/eta fields.
   const args = [
-    '--newline',
-    '--no-mtime',
-    '--no-part',
-    '--no-warnings',
+    '--newline', '--no-mtime', '--no-warnings',
+    '--ignore-errors',                  // one bad playlist item shouldn't abort the rest
+    '--download-archive', archive,      // skip items already pulled into this folder
+    playlist ? '--yes-playlist' : '--no-playlist',
     '-o', outTemplate,
-    // Merge HLS/segmented streams into a single mp4 when possible.
     '--merge-output-format', 'mp4',
     '--progress-template',
     'PROG|%(progress.status)s|%(progress.downloaded_bytes)s|%(progress.total_bytes)s|%(progress.total_bytes_estimate)s|%(progress.speed)s|%(progress.eta)s',
@@ -386,6 +461,16 @@ function startDownload(url) {
   emit(id);
 
   const handleLine = (line) => {
+    // Playlist progress: "Downloading item N of M".
+    const pitem = /Downloading (?:item|video) (\d+) of (\d+)/.exec(line);
+    if (pitem) {
+      job.playlistIndex = parseInt(pitem[1], 10);
+      job.playlistCount = Math.max(job.playlistCount, parseInt(pitem[2], 10));
+      job.itemPercent = 0; job.status = 'downloading';
+      job.message = `Item ${job.playlistIndex} of ${job.playlistCount}`;
+      emit(id);
+      return;
+    }
     // Machine-readable progress from --progress-template (fields may be "NA").
     if (line.startsWith('PROG|')) {
       const [, , dlb, tb, tbe, sp, eta] = line.split('|');
@@ -395,10 +480,16 @@ function startDownload(url) {
       const etaN = parseInt(eta, 10);
       job.downloadedBytes = downloaded;
       if (total) job.totalBytes = total;
-      if (total) job.percent = Math.min(100, (downloaded / total) * 100);
+      const itemFrac = total ? Math.min(1, downloaded / total) : 0;
+      job.itemPercent = itemFrac * 100;
+      if (job.playlist && job.playlistCount)
+        job.percent = Math.min(100, ((Math.max(1, job.playlistIndex) - 1) + itemFrac) / job.playlistCount * 100);
+      else if (total) job.percent = itemFrac * 100;
       job.speed = speed ? humanSize(speed) + '/s' : '';
       job.eta = (isFinite(etaN) && etaN >= 0) ? fmtEta(etaN) : '';
-      job.message = `Downloading ${job.percent.toFixed(1)}%`;
+      job.message = job.playlist
+        ? `Item ${job.playlistIndex || 1}${job.playlistCount ? '/' + job.playlistCount : ''} · ${job.itemPercent.toFixed(0)}%`
+        : `Downloading ${job.percent.toFixed(1)}%`;
       job.status = 'downloading';
       emit(id);
       return;
@@ -440,19 +531,18 @@ function startDownload(url) {
   proc.on('close', (code) => {
     job.proc = null;
     if (job.status === 'cancelled') {
-      // already handled; clean partial folder
-      try { fs.rmSync(folder, { recursive: true, force: true }); } catch {}
+      job.message = 'Cancelled';
+      rescan(); buildMeta().catch(() => {}); pruneEmptyDirs(destAbs);
       emit(id);
     } else if (code === 0) {
-      job.status = 'done'; job.percent = 100; job.message = 'Saved to your library';
-      rescan();
-      buildMeta().catch(() => {});
+      job.status = 'done'; job.percent = 100;
+      job.message = job.playlist ? 'Playlist saved to your library' : 'Saved to your library';
+      rescan(); buildMeta().catch(() => {}); pruneEmptyDirs(destAbs);
       emit(id);
     } else {
       job.status = 'error';
       job.message = (errTail.trim().split('\n').pop() || 'Download failed').slice(0, 200);
-      // remove empty folder on failure
-      try { if (fs.readdirSync(folder).length === 0) fs.rmSync(folder, { recursive: true, force: true }); } catch {}
+      rescan(); buildMeta().catch(() => {}); pruneEmptyDirs(destAbs);
       emit(id);
     }
   });
@@ -549,9 +639,101 @@ app.post('/api/change-password', requireAuth, (req, res) => {
   res.json({ ok: true });
 });
 
-// Library listing
+// Library listing — scoped to a folder (default root), optionally recursive.
 app.get('/api/videos', requireAuth, (req, res) => {
-  res.json(library.map(v => ({ id: v.id, name: v.name, ...quickMeta(v) })));
+  const folder = String(req.query.folder || '').replace(/^[/\\]+/, '');
+  const recursive = req.query.recursive === '1';
+  const all = req.query.all === '1';
+  let list = library;
+  if (!all) list = library.filter(v => recursive ? (v.dir === folder || v.dir.startsWith(folder + (folder ? '/' : ''))) : v.dir === folder);
+  res.json(list.map(v => ({ id: v.id, name: v.name, dir: v.dir, ...quickMeta(v) })));
+});
+
+// Folder tree (for the sidebar).
+app.get('/api/tree', requireAuth, (req, res) => res.json(buildTree()));
+
+// Create a folder under `parent`.
+app.post('/api/folders', requireAuth, (req, res) => {
+  const parent = String(req.body?.parent || '').replace(/^[/\\]+/, '');
+  const name = String(req.body?.name || '').trim();
+  if (!name || /[/\\]/.test(name) || name.startsWith('.')) return res.status(400).json({ error: 'Invalid folder name.' });
+  const abs = safePath((parent ? parent + '/' : '') + name);
+  if (!abs || abs === MEDIA_ROOT) return res.status(400).json({ error: 'Invalid path.' });
+  if (fs.existsSync(abs)) return res.status(409).json({ error: 'A folder with that name already exists.' });
+  try { fs.mkdirSync(abs, { recursive: true }); } catch { return res.status(500).json({ error: 'Could not create folder.' }); }
+  res.json({ ok: true });
+});
+
+// Rename a folder (within its parent).
+app.patch('/api/folders', requireAuth, (req, res) => {
+  const p = String(req.body?.path || '').replace(/^[/\\]+/, '');
+  const name = String(req.body?.name || '').trim();
+  if (!p) return res.status(400).json({ error: 'Cannot rename the root.' });
+  if (!name || /[/\\]/.test(name) || name.startsWith('.')) return res.status(400).json({ error: 'Invalid folder name.' });
+  const abs = safePath(p);
+  if (!abs || abs === MEDIA_ROOT) return res.status(400).json({ error: 'Invalid path.' });
+  const dest = join(dirname(abs), name);
+  if (dest !== MEDIA_ROOT && !dest.startsWith(MEDIA_ROOT + sep)) return res.status(400).json({ error: 'Invalid path.' });
+  if (fs.existsSync(dest)) return res.status(409).json({ error: 'A folder with that name already exists.' });
+  try { fs.renameSync(abs, dest); } catch { return res.status(500).json({ error: 'Rename failed.' }); }
+  rescan(); buildMeta().catch(() => {});
+  res.json({ ok: true });
+});
+
+// Delete a folder and everything inside it.
+app.delete('/api/folders', requireAuth, (req, res) => {
+  const p = String(req.body?.path || '').replace(/^[/\\]+/, '');
+  const abs = safePath(p);
+  if (!abs || abs === MEDIA_ROOT) return res.status(400).json({ error: 'Cannot delete the root folder.' });
+  try { fs.rmSync(abs, { recursive: true, force: true }); } catch { return res.status(500).json({ error: 'Delete failed.' }); }
+  rescan(); buildMeta().catch(() => {});
+  res.json({ ok: true });
+});
+
+// Bulk delete videos by id.
+app.delete('/api/videos', requireAuth, (req, res) => {
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids : [];
+  let deleted = 0;
+  for (const id of ids) {
+    const item = library.find(v => v.id === id);
+    if (!item) continue;
+    try { fs.rmSync(item.full, { force: true }); cleanupArtifacts(id); pruneEmptyDirs(dirname(item.full)); deleted++; } catch {}
+  }
+  rescan();
+  res.json({ deleted });
+});
+
+// Rename one video (keeps its folder + extension).
+app.patch('/api/videos/:id', requireAuth, (req, res) => {
+  const item = library.find(v => v.id === req.params.id);
+  if (!item) return res.status(404).json({ error: 'Not found.' });
+  const name = String(req.body?.name || '').trim();
+  if (!name || /[/\\]/.test(name)) return res.status(400).json({ error: 'Invalid name.' });
+  const ext = extname(item.full);
+  const dest = join(dirname(item.full), name.toLowerCase().endsWith(ext.toLowerCase()) ? name : name + ext);
+  if (!dest.startsWith(MEDIA_ROOT + sep)) return res.status(400).json({ error: 'Invalid path.' });
+  if (dest !== item.full && fs.existsSync(dest)) return res.status(409).json({ error: 'A file with that name already exists.' });
+  try { fs.renameSync(item.full, dest); cleanupArtifacts(item.id); } catch { return res.status(500).json({ error: 'Rename failed.' }); }
+  rescan(); buildMeta().catch(() => {});
+  res.json({ ok: true });
+});
+
+// Bulk move videos to a destination folder.
+app.post('/api/videos/move', requireAuth, (req, res) => {
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids : [];
+  const dest = safePath(String(req.body?.folder || '').replace(/^[/\\]+/, ''));
+  if (!dest) return res.status(400).json({ error: 'Invalid destination.' });
+  try { fs.mkdirSync(dest, { recursive: true }); } catch {}
+  let moved = 0;
+  for (const id of ids) {
+    const item = library.find(v => v.id === id);
+    if (!item) continue;
+    const target = join(dest, basename(item.full));
+    if (target === item.full || fs.existsSync(target)) continue;
+    try { fs.renameSync(item.full, target); cleanupArtifacts(id); pruneEmptyDirs(dirname(item.full)); moved++; } catch {}
+  }
+  rescan(); buildMeta().catch(() => {});
+  res.json({ moved });
 });
 
 // Full metadata for one video (resolution, codecs, bitrate, fps, size…).
@@ -636,7 +818,10 @@ app.post('/api/download', requireAuth, (req, res) => {
   const url = (req.body?.url || '').trim();
   if (!url || !/^https?:\/\//i.test(url))
     return res.status(400).json({ error: 'Paste a valid http(s) link.' });
-  const job = startDownload(url);
+  const folder = String(req.body?.folder || '').replace(/^[/\\]+/, '');
+  if (folder && !safePath(folder)) return res.status(400).json({ error: 'Invalid destination folder.' });
+  const playlist = !!req.body?.playlist;
+  const job = startDownload(url, { folder, playlist });
   res.json({ id: job.id, status: job.status });
 });
 

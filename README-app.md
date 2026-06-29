@@ -46,6 +46,15 @@ npm run set-password your@email.com "your-strong-password"
 
 (Restart the server after running the CLI.)
 
+## Folders & library management
+
+The left sidebar shows your folder tree (with video counts); the grid on the
+right shows the selected folder. Create folders with the **+** button, and
+**rename** or **delete** any folder from its hover actions. Select videos with
+the checkbox that appears on each card, then **Move** them to another folder or
+**Delete** them in bulk from the toolbar. Each card also has rename, delete,
+download, and info actions. All file operations are confined to the media root.
+
 ## Adding videos
 
 Two ways:
@@ -53,14 +62,13 @@ Two ways:
 **1. Drop files in.** Put video files into the `media/` folder (subfolders are
 scanned too), then click **Rescan** in the header — or refresh.
 
-**2. Download by link.** Click **+ Add videos**, paste a URL (a direct file, an
-m3u8/HLS stream, or any site yt-dlp supports), and press Download. A live
-progress bar shows percent, speed, and ETA; **Cancel** stops it mid-way. When it
-finishes, the library refreshes automatically and the video appears in the grid.
-
-Every download is saved into its **own randomly-named folder with a
-randomly-named file** — the source title is never written to disk and never
-shown in the UI. HLS/segmented streams are merged into a single mp4.
+**2. Download by link.** Click **+ Add videos**, paste a URL (a single video or
+a playlist — YouTube and most sites yt-dlp supports), choose a destination
+folder, and press Download. A live progress bar shows percent, speed, and ETA;
+**Cancel** stops it mid-way. Tick **Download entire playlist** to pull a whole
+playlist into its **own subfolder** (named after the playlist). Each folder keeps
+a small download archive, so **re-pasting the same link skips items you already
+have**. HLS/segmented streams are merged into a single mp4.
 
 Supported containers: mp4, mkv, webm, mov, avi, m4v, ts, m2ts, 3gp, ogv, and more.
 
