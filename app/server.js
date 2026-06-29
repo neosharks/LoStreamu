@@ -409,8 +409,9 @@ function fetchPlaylistEntries(url) {
             return {
               index: e.playlist_index || (i + 1),
               id: e.id || '',
-              title: e.title || e.url || ('Item ' + (i + 1)),
+              title: e.title || ('Item ' + (i + 1)),
               duration: Math.round(e.duration || 0),
+              url: (e.url && /^https?:/i.test(e.url)) ? e.url : '',
               thumb
             };
           });
@@ -622,6 +623,130 @@ function startDownload(url, { folder = '', playlist = false, items = null } = {}
   });
 
   return job;
+}
+
+// ---------------------------------------------------------------------------
+// Playlist batches — download selected items one by one, each as its own
+// yt-dlp process, with per-item status and pause / resume / stop / skip.
+// ---------------------------------------------------------------------------
+const batches = new Map();          // batchId -> batch
+const batchSubs = new Map();        // batchId -> Set(res)
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+function sanitizeName(s) {
+  return (String(s || 'Playlist').replace(/[/\\:*?"<>|\n\r\t]+/g, '_').replace(/\s+/g, ' ').trim().slice(0, 120)) || 'Playlist';
+}
+function batchView(b) {
+  return {
+    kind: 'batch', id: b.id, title: b.title, folder: b.folderRel,
+    status: b.status, paused: b.paused, total: b.items.length,
+    done: b.items.filter(i => i.status === 'done').length,
+    items: b.items.map(i => ({ index: i.index, title: i.title, duration: i.duration, status: i.status, percent: Math.round(i.percent || 0), speed: i.speed || '', eta: i.eta || '', message: i.message || '' }))
+  };
+}
+function emitB(b) {
+  const subs = batchSubs.get(b.id); if (!subs) return;
+  const payload = JSON.stringify(batchView(b));
+  for (const res of subs) res.write(`data: ${payload}\n\n`);
+}
+async function waitResume(b) { while (b.paused && b.status !== 'stopped') await sleep(300); }
+
+function startBatch({ url, folder, title, items }) {
+  const id = randToken(8);
+  const destAbs = safePath(folder) || MEDIA_ROOT;
+  const folderAbs = join(destAbs, sanitizeName(title));
+  fs.mkdirSync(folderAbs, { recursive: true });
+  const b = {
+    id, url, folderRel: folder, folderAbs, archive: join(folderAbs, '.downloaded.txt'),
+    title: title || 'Playlist', status: 'running', paused: false, cur: null,
+    items: items.map(it => ({
+      index: it.index, id: it.id || '', title: it.title || ('Item ' + it.index), duration: it.duration || 0,
+      url: (it.url && /^https?:/i.test(it.url)) ? it.url : '',
+      status: 'queued', percent: 0, speed: '', eta: '', message: 'Queued', proc: null, _pause: false, _skip: false, _archived: false
+    }))
+  };
+  batches.set(id, b);
+  runBatch(b);
+  return b;
+}
+
+function downloadItem(b, it) {
+  return new Promise((resolve) => {
+    const out = `${b.folderAbs}/${String(it.index).padStart(3, '0')} - %(title).180B [%(id)s].%(ext)s`;
+    const src = it.url ? [it.url] : [b.url, '--playlist-items', String(it.index)];
+    const args = ['--newline', '--no-mtime', '--no-warnings', '--ignore-errors', '--continue',
+      '--download-archive', b.archive, ...ytNet(),
+      it.url ? '--no-playlist' : '--yes-playlist',
+      '-o', out, '--merge-output-format', 'mp4',
+      '--progress-template', 'PROG|%(progress.status)s|%(progress.downloaded_bytes)s|%(progress.total_bytes)s|%(progress.total_bytes_estimate)s|%(progress.speed)s|%(progress.eta)s',
+      ...src];
+    let proc;
+    try { proc = spawn('yt-dlp', args); }
+    catch { it.status = 'error'; it.message = 'yt-dlp not installed'; emitB(b); return resolve('error'); }
+    it.proc = proc; it.status = 'downloading'; it.message = 'Downloading…'; it._archived = false; emitB(b);
+    let buf = '', errTail = '';
+    const onLine = (line) => {
+      if (line.startsWith('PROG|')) {
+        const [, , dlb, tb, tbe, sp, eta] = line.split('|');
+        const downloaded = parseInt(dlb, 10) || 0, total = parseInt(tb, 10) || parseInt(tbe, 10) || 0;
+        if (total) it.percent = Math.min(100, downloaded / total * 100);
+        const speed = parseFloat(sp) || 0, etaN = parseInt(eta, 10);
+        it.speed = speed ? humanSize(speed) + '/s' : '';
+        it.eta = (isFinite(etaN) && etaN >= 0) ? fmtEta(etaN) : '';
+        it.message = `Downloading ${it.percent.toFixed(0)}%`; emitB(b);
+      } else if (/has already been recorded in the archive/i.test(line)) { it._archived = true; }
+      else if (/\[Merger\]|Merging formats/.test(line)) { it.message = 'Merging…'; emitB(b); }
+    };
+    proc.stdout.on('data', (c) => {
+      buf += c.toString(); let nl;
+      while ((nl = buf.indexOf('\n')) >= 0) { onLine(buf.slice(0, nl)); buf = buf.slice(nl + 1); }
+      const cr = buf.lastIndexOf('\r'); if (cr >= 0) { onLine(buf.slice(0, cr)); buf = buf.slice(cr + 1); }
+    });
+    proc.stderr.on('data', (c) => { errTail = (errTail + c.toString()).slice(-400); });
+    proc.on('error', () => { it.proc = null; it.status = 'error'; it.message = 'Could not start yt-dlp'; emitB(b); resolve('error'); });
+    proc.on('close', (code) => {
+      it.proc = null;
+      if (it._skip) { it._skip = false; it.status = 'skipped'; it.message = 'Skipped'; emitB(b); return resolve('skipped'); }
+      if (it._pause) { it._pause = false; it.status = 'paused'; it.message = 'Paused'; emitB(b); return resolve('paused'); }
+      if (b.status === 'stopped') { it.status = 'stopped'; it.message = 'Stopped'; emitB(b); return resolve('stopped'); }
+      if (code === 0) {
+        it.status = 'done'; it.percent = 100; it.message = it._archived ? 'Already in library' : 'Done';
+        rescan(); buildMeta().catch(() => {}); emitB(b); return resolve('done');
+      }
+      it.status = 'error'; it.message = netHint((errTail.trim().split('\n').pop() || 'Failed').slice(0, 160)); emitB(b); resolve('error');
+    });
+  });
+}
+
+async function runBatch(b) {
+  let i = 0;
+  while (i < b.items.length) {
+    if (b.status === 'stopped') break;
+    const it = b.items[i];
+    if (['done', 'skipped', 'error', 'stopped'].includes(it.status)) { i++; continue; }
+    if (b.paused) { it.status = 'paused'; it.message = 'Paused'; emitB(b); await waitResume(b); continue; }
+    b.cur = it;
+    const res = await downloadItem(b, it);
+    b.cur = null;
+    if (res === 'paused') { await waitResume(b); continue; }   // retry same item (resumes .part)
+    if (res === 'stopped') break;
+    i++;
+  }
+  if (b.status !== 'stopped') b.status = 'done';
+  b.paused = false; emitB(b);
+}
+
+function pauseBatch(b) { if (b.status !== 'running' || b.paused) return; b.paused = true; if (b.cur && b.cur.proc) { b.cur._pause = true; b.cur.proc.kill('SIGTERM'); } emitB(b); }
+function resumeBatch(b) { if (b.status === 'stopped' || b.status === 'done') return; b.paused = false; emitB(b); }
+function stopBatch(b) {
+  b.status = 'stopped'; b.paused = false;
+  if (b.cur && b.cur.proc) b.cur.proc.kill('SIGKILL');
+  b.items.forEach(it => { if (['queued', 'downloading', 'paused'].includes(it.status)) { it.status = 'stopped'; it.message = 'Stopped'; } });
+  emitB(b);
+}
+function skipItem(b, index) {
+  const it = b.items.find(x => x.index === index); if (!it) return;
+  if (it.status === 'downloading') { it._skip = true; if (it.proc) it.proc.kill('SIGTERM'); }
+  else if (it.status === 'queued' || it.status === 'paused') { it.status = 'skipped'; it.message = 'Skipped'; emitB(b); }
 }
 
 // ---------------------------------------------------------------------------
@@ -901,6 +1026,37 @@ app.post('/api/playlist/probe', requireAuth, async (req, res) => {
   if (!/^https?:\/\//i.test(url)) return res.status(400).json({ error: 'Paste a valid http(s) link.' });
   res.json(await fetchPlaylistEntries(url));
 });
+
+// Start a playlist batch (downloads selected items one by one, controllable).
+app.post('/api/playlist/download', requireAuth, (req, res) => {
+  const url = (req.body?.url || '').trim();
+  if (!/^https?:\/\//i.test(url)) return res.status(400).json({ error: 'Paste a valid http(s) link.' });
+  const folder = String(req.body?.folder || '').replace(/^[/\\]+/, '');
+  if (folder && !safePath(folder)) return res.status(400).json({ error: 'Invalid destination folder.' });
+  const items = Array.isArray(req.body?.items) ? req.body.items.filter(it => it && Number.isInteger(it.index) && it.index > 0) : [];
+  if (!items.length) return res.status(400).json({ error: 'No items selected.' });
+  const b = startBatch({ url, folder, title: req.body?.title || 'Playlist', items });
+  res.json({ id: b.id, kind: 'batch' });
+});
+
+app.get('/api/batches', requireAuth, (req, res) => res.json([...batches.values()].map(batchView)));
+app.get('/api/batch/:id', requireAuth, (req, res) => {
+  const b = batches.get(req.params.id); if (!b) return res.status(404).end();
+  res.json(batchView(b));
+});
+app.get('/api/batch/:id/events', requireAuth, (req, res) => {
+  const b = batches.get(req.params.id); if (!b) return res.status(404).end();
+  res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive' });
+  res.write(`data: ${JSON.stringify(batchView(b))}\n\n`);
+  if (!batchSubs.has(b.id)) batchSubs.set(b.id, new Set());
+  batchSubs.get(b.id).add(res);
+  req.on('close', () => batchSubs.get(b.id)?.delete(res));
+});
+app.post('/api/batch/:id/pause', requireAuth, (req, res) => { const b = batches.get(req.params.id); if (!b) return res.status(404).end(); pauseBatch(b); res.json({ ok: true }); });
+app.post('/api/batch/:id/resume', requireAuth, (req, res) => { const b = batches.get(req.params.id); if (!b) return res.status(404).end(); resumeBatch(b); res.json({ ok: true }); });
+app.post('/api/batch/:id/stop', requireAuth, (req, res) => { const b = batches.get(req.params.id); if (!b) return res.status(404).end(); stopBatch(b); res.json({ ok: true }); });
+app.post('/api/batch/:id/skip/:index', requireAuth, (req, res) => { const b = batches.get(req.params.id); if (!b) return res.status(404).end(); skipItem(b, parseInt(req.params.index, 10)); res.json({ ok: true }); });
+app.post('/api/batch/:id/dismiss', requireAuth, (req, res) => { const b = batches.get(req.params.id); if (b && (b.status === 'done' || b.status === 'stopped')) batches.delete(req.params.id); res.json({ ok: true }); });
 
 app.get('/api/downloads', requireAuth, (req, res) => {
   res.json([...downloads.values()].map(jobView));

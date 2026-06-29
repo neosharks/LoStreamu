@@ -204,6 +204,26 @@
   .pl-item .pd { font-size: .7rem; color: var(--muted); font-variant-numeric: tabular-nums; }
   .pl-spin { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: .85rem; margin-top: 14px; }
 
+  /* Batch (playlist) download card */
+  .batch { flex-direction: column; align-items: stretch; }
+  .batch-ctrls { display: flex; gap: 6px; }
+  .bx { background: var(--panel-3); border: 1px solid var(--line); color: var(--text); cursor: pointer;
+    font-size: .72rem; padding: 4px 9px; border-radius: 6px; white-space: nowrap; }
+  .bx:hover { border-color: var(--line-2); }
+  .bx.danger { color: #ff6b6e; }
+  .batch-items { margin-top: 8px; max-height: 240px; overflow-y: auto; display: flex; flex-direction: column;
+    border: 1px solid var(--line); border-radius: 8px; }
+  .bi { display: flex; align-items: center; gap: 8px; padding: 6px 9px; font-size: .76rem; border-bottom: 1px solid var(--line); }
+  .bi:last-child { border-bottom: none; }
+  .bidx { color: var(--faint); font-variant-numeric: tabular-nums; min-width: 22px; }
+  .bit { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bis { font-variant-numeric: tabular-nums; color: var(--muted); white-space: nowrap; }
+  .bi-done .bis { color: var(--accent); }
+  .bi-error .bis { color: var(--danger); }
+  .bi-downloading .bis { color: var(--text); }
+  .bi-skip { width: 22px; height: 22px; border: none; background: none; color: var(--faint); cursor: pointer; border-radius: 5px; }
+  .bi-skip:hover { background: rgba(255,255,255,.1); color: var(--text); }
+
   /* Base icon button (used by modal close buttons + player overlay) */
   .iconbtn { background: rgba(255,255,255,.08); border: none; color: var(--text);
     width: 40px; height: 40px; border-radius: 50%; cursor: pointer;
@@ -965,6 +985,7 @@ const plSpin = document.getElementById('plSpin');
 const plPreview = document.getElementById('plPreview');
 const plList = document.getElementById('plList');
 let plEntries = [];
+let plMetaTitle = '';
 
 function resetPreview() { plPreview.style.display = 'none'; plSpin.style.display = 'none'; plList.innerHTML = ''; plEntries = []; }
 function syncDlBtn() { dlStartBtn.textContent = dlPlaylist.checked ? 'Preview playlist' : 'Download'; }
@@ -1011,8 +1032,8 @@ async function previewPlaylist(url) {
   plSpin.style.display = 'none';
   if (d.error) { dlErr.textContent = d.error; dlErr.style.display = 'block'; return; }
   if (!d.entries || !d.entries.length) { dlErr.textContent = 'No playlist items found — this link may be a single video or the playlist is unavailable.'; dlErr.style.display = 'block'; return; }
-  plEntries = d.entries;
-  document.getElementById('plTitle').textContent = (d.title || 'Playlist') + ' · ' + d.entries.length + ' videos';
+  plEntries = d.entries; plMetaTitle = d.title || 'Playlist';
+  document.getElementById('plTitle').textContent = plMetaTitle + ' · ' + d.entries.length + ' videos';
   plList.innerHTML = d.entries.map(e => `
     <label class="pl-item">
       <input type="checkbox" data-i="${e.index}" checked>
@@ -1036,17 +1057,89 @@ document.getElementById('plAll').addEventListener('click', () => {
 
 document.getElementById('plGo').addEventListener('click', async () => {
   dlErr.style.display = 'none';
-  const items = [...plList.querySelectorAll('input[type=checkbox]:checked')].map(b => parseInt(b.dataset.i, 10));
-  if (!items.length) { dlErr.textContent = 'Select at least one video.'; dlErr.style.display = 'block'; return; }
-  const r = await fetch('/api/download', {
+  const picked = new Set([...plList.querySelectorAll('input[type=checkbox]:checked')].map(b => parseInt(b.dataset.i, 10)));
+  const sel = plEntries.filter(e => picked.has(e.index));
+  if (!sel.length) { dlErr.textContent = 'Select at least one video.'; dlErr.style.display = 'block'; return; }
+  const r = await fetch('/api/playlist/download', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ url: dlUrl.value.trim(), folder: dlFolder.value, playlist: true, items })
+    body: JSON.stringify({ url: dlUrl.value.trim(), folder: dlFolder.value, title: plMetaTitle, items: sel })
   });
   const d = await r.json().catch(() => ({}));
   if (!r.ok) { dlErr.textContent = d.error || 'Could not start download.'; dlErr.style.display = 'block'; return; }
   dlUrl.value = ''; resetPreview(); syncDlBtn();
-  upsertItem(d); subscribe(d.id);
+  subscribeBatch(d.id);
 });
+
+// ---- Batch (playlist) rendering ----
+const batchStreams = {};   // id -> EventSource
+const batchJobs = {};      // id -> latest batch view
+const batchDone = {};      // id -> last done count (to trigger a library refresh)
+let refreshTimer = null;
+function scheduleRefresh() { clearTimeout(refreshTimer); refreshTimer = setTimeout(() => load(), 800); }
+
+function biRow(it) {
+  const st = it.status === 'done' ? '✓ Done'
+    : it.status === 'error' ? '✕ Failed'
+    : it.status === 'skipped' ? 'Skipped'
+    : it.status === 'paused' ? 'Paused'
+    : it.status === 'stopped' ? 'Stopped'
+    : it.status === 'downloading' ? (it.percent + '%' + (it.speed ? ' · ' + it.speed : ''))
+    : 'Queued';
+  const canSkip = ['queued', 'downloading', 'paused'].includes(it.status);
+  return `<div class="bi bi-${it.status}">
+    <span class="bidx">${it.index}</span>
+    <span class="bit">${escapeHtml(it.title)}</span>
+    <span class="bis">${escapeHtml(st)}</span>
+    ${canSkip ? `<button class="bi-skip" data-skip="${it.index}" title="Skip">✕</button>` : ''}
+  </div>`;
+}
+
+function renderBatch(bv) {
+  batchJobs[bv.id] = bv;
+  const empty = dlList.querySelector('.dl-empty'); if (empty) empty.remove();
+  let el = document.getElementById('b-' + bv.id);
+  if (!el) { el = document.createElement('div'); el.className = 'dl-item batch'; el.id = 'b-' + bv.id; dlList.prepend(el); }
+  const active = bv.status === 'running';
+  const finished = bv.status === 'done' || bv.status === 'stopped';
+  const pct = bv.total ? Math.round(bv.done / bv.total * 100) : 0;
+  el.innerHTML = `
+    <div class="dl-statline">
+      <span class="dl-stat">${escapeHtml(bv.title)} · ${bv.done}/${bv.total}${bv.paused ? ' · paused' : ''}</span>
+      <span class="batch-ctrls">
+        ${active && !bv.paused ? '<button class="bx" data-a="pause">Pause</button>' : ''}
+        ${active && bv.paused ? '<button class="bx" data-a="resume">Resume</button>' : ''}
+        ${finished ? '<button class="bx" data-a="dismiss">Dismiss</button>' : '<button class="bx danger" data-a="stop">Stop</button>'}
+      </span>
+    </div>
+    <div class="dl-bar"><div class="fill" style="width:${pct}%"></div></div>
+    <div class="batch-items">${bv.items.map(biRow).join('')}</div>`;
+  el.querySelectorAll('[data-a]').forEach(btn => btn.addEventListener('click', async () => {
+    const a = btn.dataset.a;
+    await fetch('/api/batch/' + bv.id + '/' + a, { method: 'POST' });
+    if (a === 'dismiss') { el.remove(); delete batchJobs[bv.id]; renderEmpty(); updateDock(); }
+  }));
+  el.querySelectorAll('[data-skip]').forEach(btn => btn.addEventListener('click', () =>
+    fetch('/api/batch/' + bv.id + '/skip/' + btn.dataset.skip, { method: 'POST' })));
+}
+
+function subscribeBatch(id) {
+  renderBatchPlaceholder(id);
+  if (batchStreams[id]) return;
+  const es = new EventSource('/api/batch/' + id + '/events');
+  batchStreams[id] = es;
+  es.onmessage = (ev) => {
+    const bv = JSON.parse(ev.data);
+    renderBatch(bv);
+    if ((bv.done || 0) > (batchDone[id] || 0)) { batchDone[id] = bv.done; scheduleRefresh(); }
+    updateDock();
+    if (bv.status === 'done' || bv.status === 'stopped') { es.close(); delete batchStreams[id]; scheduleRefresh(); }
+  };
+  es.onerror = () => { es.close(); delete batchStreams[id]; };
+}
+function renderBatchPlaceholder(id) {
+  if (document.getElementById('b-' + id)) return;
+  renderBatch({ id, title: 'Playlist', done: 0, total: 0, status: 'running', paused: false, items: [] });
+}
 
 dlStartBtn.addEventListener('click', startDownload);
 dlUrl.addEventListener('keydown', e => { if (e.key === 'Enter') startDownload(); });
@@ -1061,9 +1154,18 @@ dlUrl.addEventListener('input', () => {
 
 async function refreshDownloads() {
   const r = await fetch('/api/downloads');
-  if (!r.ok) return;
-  const list = await r.json();
-  list.forEach(j => { upsertItem(j); if (['downloading', 'processing', 'starting'].includes(j.status)) subscribe(j.id); });
+  if (r.ok) {
+    const list = await r.json();
+    list.forEach(j => { upsertItem(j); if (['downloading', 'processing', 'starting'].includes(j.status)) subscribe(j.id); });
+  }
+  // Resume any playlist batches.
+  try {
+    const br = await fetch('/api/batches');
+    if (br.ok) (await br.json()).forEach(bv => {
+      renderBatch(bv); batchDone[bv.id] = bv.done;
+      if (bv.status === 'running') subscribeBatch(bv.id);
+    });
+  } catch {}
   renderEmpty(); updateDock();
 }
 
@@ -1146,11 +1248,21 @@ function upsertItem(j) {
   });
 }
 
-// Floating dock — shown only while the modal is closed and downloads are active.
+// Floating dock — shown only while the modal is closed and work is active.
 function updateDock() {
   const active = Object.values(jobs).filter(j => ['starting', 'downloading', 'processing'].includes(j.status));
-  const show = !dlModal.classList.contains('open') && active.length > 0;
+  const activeBatches = Object.values(batchJobs).filter(b => b.status === 'running');
+  const show = !dlModal.classList.contains('open') && (active.length > 0 || activeBatches.length > 0);
   if (!show) { dlDock.classList.remove('show'); return; }
+  if (activeBatches.length) {
+    const b = activeBatches[0];
+    const pct = b.total ? Math.round(b.done / b.total * 100) : 0;
+    document.getElementById('dockTitle').textContent = activeBatches.length === 1 ? b.title : activeBatches.length + ' playlists';
+    document.getElementById('dockSub').textContent = b.done + '/' + b.total + (b.paused ? ' · paused' : '') + (active.length ? ' · +' + active.length + ' more' : '');
+    document.getElementById('dockFill').style.width = pct + '%';
+    dlDock.classList.add('show');
+    return;
+  }
   const withPct = active.filter(j => j.totalBytes || j.percent);
   const avg = withPct.length ? withPct.reduce((a, j) => a + (j.percent || 0), 0) / withPct.length : 0;
   const lead = active[0];
