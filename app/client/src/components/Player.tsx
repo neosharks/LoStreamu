@@ -1,5 +1,5 @@
 import { useEffect, useRef, useCallback } from 'react';
-import { X, SkipBack, SkipForward, ChevronLeft } from 'lucide-react';
+import { SkipBack, SkipForward, ChevronLeft } from 'lucide-react';
 import Plyr from 'plyr';
 import 'plyr/dist/plyr.css';
 import { usePlayerStore } from '@/stores/playerStore';

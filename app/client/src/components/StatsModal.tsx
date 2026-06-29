@@ -4,7 +4,6 @@ import { toast } from 'sonner';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogBody } from './ui/dialog';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
-import { Progress } from './ui/progress';
 import { videosApi } from '@/api/videos';
 import { settingsApi } from '@/api/settings';
 import { formatBytes, formatUptime } from '@/lib/utils';

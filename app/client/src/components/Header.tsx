@@ -1,9 +1,7 @@
-import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { BarChart2, RefreshCw, Settings, LogOut, Plus, Wifi, WifiOff } from 'lucide-react';
+import { BarChart2, RefreshCw, Settings, LogOut, Plus } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from './ui/button';
-import { Badge } from './ui/badge';
 import { settingsApi, authApi } from '@/api/settings';
 import { videosApi } from '@/api/videos';
 import { cn } from '@/lib/utils';
