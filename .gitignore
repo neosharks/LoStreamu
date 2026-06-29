@@ -1,10 +1,14 @@
 # App runtime — never commit these
 app/node_modules/
+app/client/node_modules/
+app/dist/
+app/client/dist/
 app/config.json
 app/secrets.json
 app/meta-cache.json
 app/server.log
 app/cookies.txt
+app/yt-dlp
 app/media/*
 !app/media/.gitkeep
 app/thumbnails/*.jpg

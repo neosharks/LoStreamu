@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 
-# StreamVault — Proxmox VE helper script
-# Creates a Debian 12 LXC, installs Node.js + ffmpeg + yt-dlp, deploys
-# StreamVault, and starts it as a systemd service.
+# StreamVault v2 — Proxmox VE helper script
+# Creates a Debian 12 LXC and runs the app's own install-lxc.sh inside it.
 #
 # Usage (run in the Proxmox VE host shell):
 #   bash -c "$(curl -fsSL https://raw.githubusercontent.com/thakursat/hosted-video-streamer/refs/heads/main/streamvault.sh)"
@@ -13,29 +12,25 @@
 
 set -euo pipefail
 
-# ---- EDIT THIS after you push to GitHub -----------------------------------
 REPO_RAW="${REPO_RAW:-https://raw.githubusercontent.com/thakursat/hosted-video-streamer/refs/heads/main}"
 APP_ARCHIVE_URL="${APP_ARCHIVE_URL:-$REPO_RAW/streamvault-app.tar.gz}"
-# ---------------------------------------------------------------------------
 
 APP="StreamVault"
 APP_PORT="8080"
 
-# ---- Configurable defaults (override via environment) ----------------------
-CT_ID="${CT_ID:-}"                       # auto-picked if empty
+CT_ID="${CT_ID:-}"
 CT_HOSTNAME="${CT_HOSTNAME:-streamvault}"
 CT_CPU="${CT_CPU:-2}"
-CT_RAM="${CT_RAM:-8192}"                  # MB  -> 8 GB
-CT_DISK="${CT_DISK:-200}"                 # GB  -> 200 GB
+CT_RAM="${CT_RAM:-8192}"
+CT_DISK="${CT_DISK:-200}"
 CT_BRIDGE="${CT_BRIDGE:-vmbr0}"
-CT_NET="${CT_NET:-dhcp}"                  # 'dhcp' or e.g. 192.168.1.50/24
-CT_GW="${CT_GW:-}"                        # gateway when using a static IP
+CT_NET="${CT_NET:-dhcp}"
+CT_GW="${CT_GW:-}"
 CT_UNPRIVILEGED="${CT_UNPRIVILEGED:-1}"
-CT_STORAGE="${CT_STORAGE:-}"             # auto-detected if empty
+CT_STORAGE="${CT_STORAGE:-}"
 TEMPLATE_STORAGE="${TEMPLATE_STORAGE:-local}"
 OS_TEMPLATE_PREFIX="debian-12-standard"
 
-# ---- Pretty output ---------------------------------------------------------
 RD=$'\033[01;31m'; GN=$'\033[1;92m'; YW=$'\033[33m'; BL=$'\033[36m'; CL=$'\033[m'
 CM="${GN}✓${CL}"; CROSS="${RD}✗${CL}"; INFO="${BL}ℹ${CL}"
 msg_info() { echo -e " ${YW}➤${CL} $1"; }
@@ -52,43 +47,44 @@ header() {
    ___) | |_| | |  __/ (_| | | | | | |  \ V / (_| | |_| | | |_
   |____/ \__|_|  \___|\__,_|_| |_| |_|   \_/ \__,_|\__,_|_|\__|
 
-  Self-hosted, auth-gated video streaming  ·  Proxmox VE LXC installer
+  v2  ·  TypeScript + React  ·  Proxmox VE LXC installer
 EOF
   echo
 }
 
-# ---- Pre-flight ------------------------------------------------------------
+# ── Pre-flight ────────────────────────────────────────────────────────────────
+
 header
 [ "$(id -u)" -eq 0 ] || die "Run this on the Proxmox host as root."
-command -v pct >/dev/null 2>&1 || die "pct not found — this must run on a Proxmox VE host."
-command -v pveam >/dev/null 2>&1 || die "pveam not found — this must run on a Proxmox VE host."
+command -v pct   >/dev/null 2>&1 || die "pct not found — run this on a Proxmox VE host."
+command -v pveam >/dev/null 2>&1 || die "pveam not found — run this on a Proxmox VE host."
 
-# Pick a free CT ID if none given.
 if [ -z "$CT_ID" ]; then
   CT_ID="$(pvesh get /cluster/nextid 2>/dev/null || echo 100)"
 fi
-msg_info "Using container ID ${BL}${CT_ID}${CL}"
+msg_info "Container ID: ${BL}${CT_ID}${CL}"
 
-# Auto-detect a storage that supports rootdir if not specified.
 if [ -z "$CT_STORAGE" ]; then
   CT_STORAGE="$(pvesm status -content rootdir 2>/dev/null | awk 'NR==2{print $1}')"
-  [ -n "$CT_STORAGE" ] || die "No storage supporting container rootfs found. Set CT_STORAGE."
+  [ -n "$CT_STORAGE" ] || die "No rootdir-capable storage found. Set CT_STORAGE."
 fi
-msg_ok "Container storage: ${BL}${CT_STORAGE}${CL}"
+msg_ok "Storage: ${BL}${CT_STORAGE}${CL}"
 
-# ---- Ensure OS template -----------------------------------------------------
-msg_info "Checking for a Debian 12 template"
+# ── Download OS template ──────────────────────────────────────────────────────
+
+msg_info "Checking for a Debian 12 template..."
 pveam update >/dev/null 2>&1 || true
 TEMPLATE="$(pveam available --section system 2>/dev/null | awk -v p="$OS_TEMPLATE_PREFIX" '$2 ~ p {print $2}' | sort -V | tail -1)"
 [ -n "$TEMPLATE" ] || die "Could not find a $OS_TEMPLATE_PREFIX template via pveam."
 if ! pveam list "$TEMPLATE_STORAGE" 2>/dev/null | grep -q "$TEMPLATE"; then
-  msg_info "Downloading template $TEMPLATE"
+  msg_info "Downloading template $TEMPLATE ..."
   pveam download "$TEMPLATE_STORAGE" "$TEMPLATE" >/dev/null 2>&1 || die "Template download failed."
 fi
 TEMPLATE_REF="${TEMPLATE_STORAGE}:vztmpl/${TEMPLATE}"
-msg_ok "Template ready: ${BL}${TEMPLATE}${CL}"
+msg_ok "Template: ${BL}${TEMPLATE}${CL}"
 
-# ---- Build network argument -------------------------------------------------
+# ── Create and start LXC ─────────────────────────────────────────────────────
+
 if [ "$CT_NET" = "dhcp" ]; then
   NET0="name=eth0,bridge=${CT_BRIDGE},ip=dhcp"
 else
@@ -96,8 +92,7 @@ else
   [ -n "$CT_GW" ] && NET0="${NET0},gw=${CT_GW}"
 fi
 
-# ---- Create container -------------------------------------------------------
-msg_info "Creating LXC ${CT_ID} (${CT_CPU} vCPU, ${CT_RAM} MB RAM, ${CT_DISK} GB disk)"
+msg_info "Creating LXC ${CT_ID} (${CT_CPU} vCPU · ${CT_RAM} MB RAM · ${CT_DISK} GB disk)..."
 pct create "$CT_ID" "$TEMPLATE_REF" \
   --hostname "$CT_HOSTNAME" \
   --cores "$CT_CPU" \
@@ -108,107 +103,52 @@ pct create "$CT_ID" "$TEMPLATE_REF" \
   --unprivileged "$CT_UNPRIVILEGED" \
   --features nesting=1 \
   --onboot 1 \
-  --description "StreamVault — deployed via helper script" >/dev/null \
+  --description "StreamVault v2 — TypeScript + React" >/dev/null \
   || die "pct create failed."
 msg_ok "Container created"
 
-msg_info "Starting container"
+msg_info "Starting container..."
 pct start "$CT_ID" >/dev/null || die "Failed to start container."
-# Wait for network inside the container.
+msg_info "Waiting for network..."
 for i in $(seq 1 30); do
-  pct exec "$CT_ID" -- bash -c "getent hosts deb.nodesource.com >/dev/null 2>&1" && break
+  pct exec "$CT_ID" -- bash -c "getent hosts github.com >/dev/null 2>&1" && break
   sleep 2
 done
-msg_ok "Container running"
+msg_ok "Container running with network"
 
-# ---- Provision inside the container ----------------------------------------
-run() { pct exec "$CT_ID" -- bash -c "$1"; }
+# ── Deploy ────────────────────────────────────────────────────────────────────
 
-msg_info "Installing base packages (this takes a few minutes)"
-run "export DEBIAN_FRONTEND=noninteractive; apt-get update -qq && apt-get install -y -qq curl ca-certificates ffmpeg unzip tar >/dev/null" \
-  || die "apt install failed."
-msg_ok "Base packages installed"
-
-msg_info "Installing Node.js 20 LTS"
-run "curl -fsSL https://deb.nodesource.com/setup_20.x | bash - >/dev/null 2>&1 && apt-get install -y -qq nodejs >/dev/null" \
-  || die "Node.js install failed."
-msg_ok "Node.js installed"
-
-msg_info "Installing yt-dlp"
-run "curl -fsSL https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp && chmod a+rx /usr/local/bin/yt-dlp" \
-  || die "yt-dlp install failed."
-msg_ok "yt-dlp installed"
-
-msg_info "Scheduling daily yt-dlp updates"
-# Stale yt-dlp throws 'HTTP Error 410: Gone'. Keep it current via a systemd timer.
-run "cat >/etc/systemd/system/yt-dlp-update.service <<'UNIT'
-[Unit]
-Description=Update yt-dlp to the latest release
-After=network-online.target
-Wants=network-online.target
-[Service]
-Type=oneshot
-ExecStart=/usr/local/bin/yt-dlp -U
-UNIT"
-run "cat >/etc/systemd/system/yt-dlp-update.timer <<'UNIT'
-[Unit]
-Description=Daily yt-dlp self-update
-[Timer]
-OnCalendar=daily
-Persistent=true
-RandomizedDelaySec=1h
-[Install]
-WantedBy=timers.target
-UNIT"
-run "systemctl daemon-reload && systemctl enable --now yt-dlp-update.timer >/dev/null 2>&1" \
-  || msg_info "yt-dlp update timer not enabled (non-fatal)"
-msg_ok "yt-dlp daily updates scheduled"
-
-msg_info "Deploying StreamVault"
-run "mkdir -p /opt/streamvault && curl -fsSL '${APP_ARCHIVE_URL}' -o /tmp/sv.tar.gz" \
+msg_info "Downloading StreamVault app archive..."
+pct exec "$CT_ID" -- bash -c \
+  "curl -fsSL '${APP_ARCHIVE_URL}' -o /tmp/sv.tar.gz" \
   || die "Could not download app archive from ${APP_ARCHIVE_URL}"
-# The archive packs the app files at its root, so extract straight into place.
-run "tar -xzf /tmp/sv.tar.gz -C /opt/streamvault && rm -f /tmp/sv.tar.gz" \
+
+msg_info "Extracting to /opt/streamvault ..."
+pct exec "$CT_ID" -- bash -c \
+  "mkdir -p /opt/streamvault && tar -xzf /tmp/sv.tar.gz -C /opt/streamvault && rm -f /tmp/sv.tar.gz" \
   || die "Failed to unpack app archive."
-run "[ -f /opt/streamvault/package.json ]" \
-  || die "Archive did not contain package.json — check APP_ARCHIVE_URL."
-run "cd /opt/streamvault && npm install --omit=dev --no-fund --no-audit >/dev/null 2>&1" \
-  || die "npm install failed."
-msg_ok "StreamVault deployed"
 
-msg_info "Creating service user and systemd unit"
-run "id streamvault >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin streamvault"
-# Generate fresh secrets (session key etc.) at deploy time — never from git.
-run "cd /opt/streamvault && node gen-secrets.js" \
-  || die "Secret generation failed."
-# Generate config.json on first run, then chown.
-run "cd /opt/streamvault && (node server.js & SV=\$!; sleep 2; kill \$SV 2>/dev/null; wait \$SV 2>/dev/null; true)"
-run "mkdir -p /opt/streamvault/media /opt/streamvault/thumbnails && chown -R streamvault:streamvault /opt/streamvault"
-run "install -m 0644 /opt/streamvault/streamvault.service /etc/systemd/system/streamvault.service 2>/dev/null || true"
-# If the unit isn't bundled, write one.
-run "test -f /etc/systemd/system/streamvault.service || cat >/etc/systemd/system/streamvault.service <<'UNIT'
-[Unit]
-Description=StreamVault video streaming server
-After=network-online.target
-Wants=network-online.target
-[Service]
-Type=simple
-User=streamvault
-Group=streamvault
-WorkingDirectory=/opt/streamvault
-ExecStart=/usr/bin/node /opt/streamvault/server.js
-Restart=on-failure
-RestartSec=3
-NoNewPrivileges=true
-PrivateTmp=true
-[Install]
-WantedBy=multi-user.target
-UNIT"
-run "systemctl daemon-reload && systemctl enable --now streamvault >/dev/null 2>&1" \
-  || die "Failed to start the service."
-msg_ok "Service enabled and started"
+pct exec "$CT_ID" -- bash -c "[ -f /opt/streamvault/install-lxc.sh ]" \
+  || die "install-lxc.sh missing from archive — rebuild it with ./build-archive.sh"
 
-# ---- Resolve IP -------------------------------------------------------------
+# ── Run the installer inside the container ────────────────────────────────────
+# install-lxc.sh handles everything: apt packages, Node.js, ffmpeg, yt-dlp,
+# npm install, tsc build, React build, prune, service user, systemd service.
+
+msg_info "Running install-lxc.sh inside the container (this takes 3-5 minutes)..."
+echo ""
+pct exec "$CT_ID" -- bash /opt/streamvault/install-lxc.sh
+echo ""
+
+# ── Start the service ─────────────────────────────────────────────────────────
+
+msg_info "Starting StreamVault service..."
+pct exec "$CT_ID" -- systemctl start streamvault \
+  || die "Service failed to start — check: pct exec ${CT_ID} -- journalctl -u streamvault -n 30"
+msg_ok "Service started"
+
+# ── Resolve IP ───────────────────────────────────────────────────────────────
+
 IP=""
 for i in $(seq 1 15); do
   IP="$(pct exec "$CT_ID" -- bash -c "hostname -I 2>/dev/null | awk '{print \$1}'" 2>/dev/null || true)"
@@ -216,18 +156,18 @@ for i in $(seq 1 15); do
   sleep 2
 done
 
-# ---- Done -------------------------------------------------------------------
+# ── Done ──────────────────────────────────────────────────────────────────────
+
 echo
-msg_ok "${GN}${APP} installation complete!${CL}"
+msg_ok "${GN}StreamVault v2 installation complete!${CL}"
 echo
-echo -e " ${INFO} Access it at:  ${GN}http://${IP:-<container-ip>}:${APP_PORT}${CL}"
+echo -e " ${INFO} Open:   ${GN}http://${IP:-<container-ip>}:${APP_PORT}${CL}"
+echo -e " ${INFO} Create your account on the first visit (signup is shown until an account exists)."
 echo
-echo -e " ${INFO} ${GN}Open the URL above and create your account${CL} on the first visit."
-echo -e "      (No default password — the signup screen appears until an account exists.)"
-echo -e " ${INFO} Prefer the command line? Seed the account from the host:"
-echo -e "      ${BL}pct exec ${CT_ID} -- bash -c \"cd /opt/streamvault && sudo -u streamvault npm run set-password you@example.com 'your-password'\"${CL}"
+echo -e " ${INFO} Forgot password? Reset it from the Proxmox host:"
+echo -e "      ${BL}pct exec ${CT_ID} -- bash -c 'cd /opt/streamvault && sudo -u streamvault npm run set-password you@email.com mypassword'${CL}"
 echo -e "      ${BL}pct exec ${CT_ID} -- systemctl restart streamvault${CL}"
 echo
-echo -e " ${INFO} Media is stored inside the container at ${BL}/opt/streamvault/media${CL}."
-echo -e "      Use the in-app ${YW}+ Add videos${CL} button to download by link, or drop files in and Rescan."
+echo -e " ${INFO} Live logs:  ${BL}pct exec ${CT_ID} -- journalctl -u streamvault -f${CL}"
+echo -e " ${INFO} Media dir:  ${BL}/opt/streamvault/media${CL} inside the container"
 echo

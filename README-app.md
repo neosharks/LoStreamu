@@ -1,196 +1,123 @@
-# StreamVault
+# StreamVault — Manual Install
 
-A lightweight, self-hosted, auth-gated video streamer. Like a tiny Plex: drop
-files into a folder, sign in, and everything shows up with thumbnails. Click a
-video and it plays at full resolution in a polished [Plyr](https://plyr.io)
-player (vendored locally, no CDN at runtime): scrub-bar **peek thumbnails**,
-playback speed, volume, mute, Picture-in-Picture, download, fullscreen, full
-keyboard control, and automatic resume where you left off. Plays the next video
-automatically.
-
-Each card shows a duration badge, resolution, and size, with hover actions to
-**download** the original file or open an **info** panel (resolution, codecs,
-bitrate, frame rate). Search filters the library instantly. A **Stats** view
-reports disk, memory, CPU load, uptime, library size, and active downloads.
-Downloads are also available from inside the player.
+For running StreamVault directly on any Debian/Ubuntu server or macOS without Proxmox.
 
 ## Requirements
 
-- **Node.js 18+**
-- **ffmpeg** and **ffprobe** on your PATH (used for thumbnails and merging streams).
+- **Node.js 20+**
+- **ffmpeg** + **ffprobe** (thumbnails and scrub-preview sprites)
   - macOS: `brew install ffmpeg`
-- **yt-dlp** on your PATH (used by the "Add videos" downloader).
-  - macOS: `brew install yt-dlp`  ·  or grab the binary from the yt-dlp releases page.
+  - Debian/Ubuntu: `apt-get install ffmpeg`
+- **yt-dlp** (video downloads)
+  - macOS: `brew install yt-dlp`
+  - Linux: `curl -fsSL https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp && chmod +x /usr/local/bin/yt-dlp`
 
-## Setup
+## Development (local)
 
 ```bash
-cd streamvault
+git clone https://github.com/thakursat/hosted-video-streamer.git
+cd hosted-video-streamer/app
+
+# Install server deps
 npm install
-npm start
+
+# Install client deps
+cd client && npm install && cd ..
+
+# Start both (backend :8080, frontend :5173 with hot reload)
+npm run dev
 ```
 
-Open http://localhost:8080
+Open **http://localhost:5173** — the React dev server proxies `/api`, `/stream`, and `/thumb` to the Express backend on port 8080.
 
-On first run a `config.json` is created with **no account**. Open
-http://localhost:8080 and the signup screen lets you create the single admin
-account (email + password, 8+ chars). Once it exists, signup is locked and only
-sign-in is shown.
+## Production (Debian/Ubuntu LXC or server)
 
-Change your email or password anytime from the in-app **Account** button.
-Prefer the CLI (or locked yourself out)? Seed/reset it directly:
+Clone or download the source, then run the installer as root:
 
 ```bash
-npm run set-password your@email.com "your-strong-password"
+git clone https://github.com/thakursat/hosted-video-streamer.git
+cd hosted-video-streamer/app
+bash install-lxc.sh
 ```
 
-(Restart the server after running the CLI.)
+The installer:
+1. Installs system packages (Node.js 20, ffmpeg, yt-dlp)
+2. Sets up a daily yt-dlp auto-update timer
+3. Runs `npm install` (full — TypeScript compiler needed for the build)
+4. Compiles the TypeScript server → `dist/`
+5. Builds the React frontend → `client/dist/`
+6. Prunes dev dependencies and removes `client/node_modules`
+7. Creates the `streamvault` service user
+8. Writes a default `config.json` if none exists
+9. Installs and enables `streamvault.service`
 
-## Folders & library management
+Then start it:
 
-The left sidebar shows your folder tree (with video counts); the grid on the
-right shows the selected folder. Create folders with the **+** button, and
-**rename** or **delete** any folder from its hover actions. Select videos with
-the checkbox that appears on each card, then **Move** them to another folder or
-**Delete** them in bulk from the toolbar. Each card also has rename, delete,
-download, and info actions. All file operations are confined to the media root.
+```bash
+systemctl start streamvault
+```
 
-## Adding videos
+Open **http://\<server-ip\>:8080** and create your account on the first visit.
 
-Two ways:
+## Where files live
 
-**1. Drop files in.** Put video files into the `media/` folder (subfolders are
-scanned too), then click **Rescan** in the header — or refresh.
+| Path | Contents |
+|---|---|
+| `/opt/streamvault/config.json` | Port, email, password hash, media dir, proxy |
+| `/opt/streamvault/secrets.json` | Session signing key (auto-generated, never commit) |
+| `/opt/streamvault/media/` | Videos, organised in subfolders |
+| `/opt/streamvault/thumbnails/` | Generated thumbnails, sprites, VTT seek files |
+| `/opt/streamvault/meta-cache.json` | Cached ffprobe metadata (duration, resolution) |
+| `/opt/streamvault/cookies.txt` | Optional Netscape cookies for age-gated sites |
+| `/opt/streamvault/dist/` | Compiled TypeScript server |
+| `/opt/streamvault/client/dist/` | Built React frontend |
 
-**2. Download by link.** Click **+ Add videos**, paste a URL (a single video or
-a playlist — YouTube and most sites yt-dlp supports), choose a destination
-folder, and press Download. A live progress bar shows percent, speed, and ETA;
-**Cancel** stops it mid-way. Tick **Download entire playlist** to pull a whole
-playlist into its **own subfolder** (named after the playlist). Each folder keeps
-a small download archive, so **re-pasting the same link skips items you already
-have**. HLS/segmented streams are merged into a single mp4.
-
-> **YouTube playlists / age-restricted content:** YouTube increasingly blocks
-> anonymous playlist requests (HTTP 403) and gates some videos behind a login.
-> If a playlist won't expand, export your browser cookies to a Netscape-format
-> **`cookies.txt`** and drop it next to `server.js` (`/opt/streamvault/cookies.txt`
-> on the LXC). It's picked up automatically for every download and never
-> committed. Channel / model / pornstar pages are treated as playlists too.
-
-> **Blocked site / connection reset (`[Errno 104]`):** if a download fails with
-> a reset/refused connection, your network or ISP is likely blocking that site.
-> Route yt-dlp through a proxy or VPN: set **`SV_PROXY`** (or `"proxy"` in
-> `config.json`) to e.g. `http://host:port` or `socks5://127.0.0.1:1080`. For the
-> systemd service, add `Environment=SV_PROXY=…` to the unit (or a drop-in) and
-> restart. Every download and metadata probe then goes through it.
-
-Supported containers: mp4, mkv, webm, mov, avi, m4v, ts, m2ts, 3gp, ogv, and more.
-
-> **Browser playback note:** the server streams files directly (with HTTP range
-> support, so seeking and skip work). Browsers play what they natively support —
-> mp4 (H.264/AAC) and webm everywhere; mkv and some codecs may not decode in all
-> browsers. For the widest compatibility, keep media as mp4 (H.264 + AAC). If you
-> want automatic transcoding for unsupported formats, that's a larger add-on and
-> isn't included in this lightweight build.
-
-## config.json
+## config.json reference
 
 ```json
 {
   "port": 8080,
-  "email": "",
-  "passwordHash": "",
-  "mediaDir": "/absolute/path/to/media",
-  "updateUrl": "https://raw.githubusercontent.com/thakursat/hosted-video-streamer/refs/heads/main/streamvault-app.tar.gz"
+  "email": "you@example.com",
+  "passwordHash": "<bcrypt hash>",
+  "mediaDir": "/opt/streamvault/media",
+  "proxy": ""
 }
 ```
 
-`email` and `passwordHash` are empty until you create an account via the signup
-screen (or `npm run set-password`). `updateUrl` is the tarball the in-app
-**Update** button pulls from — override it (or set the `SV_UPDATE_URL` env var)
-if you fork the repo.
+Set `proxy` to an `http://`, `https://`, or `socks5://` URL to route all yt-dlp downloads through it. Alternatively, set the `SV_PROXY` environment variable.
 
-### Secrets
-
-The session signing key (and any future tokens) live in **`secrets.json`**, not
-in `config.json` and never in git. They're generated at deploy time:
+## Reset password (CLI)
 
 ```bash
-npm run gen-secrets            # create secrets.json if missing (idempotent)
-npm run gen-secrets -- --rotate  # force fresh keys (signs everyone out)
+cd /opt/streamvault
+sudo -u streamvault npm run set-password you@example.com 'newpassword'
+systemctl restart streamvault
 ```
 
-The server also generates them on first start if they're missing, and a legacy
-`sessionSecret` already in `config.json` is migrated over automatically. The file
-is written `0600`; keep it out of backups you share. `secrets.json` and
-`config.json` are both preserved across in-app updates.
-
-Point `mediaDir` anywhere — e.g. an external drive or an existing library
-folder. Thumbnails are cached in `thumbnails/` keyed by file path.
-
-## Player controls
-
-- **Space** — play/pause
-- **← / →** — skip 10 seconds back/forward
-- **n** — next video
-- **Esc** — close player
-- Click the timeline to scrub; fullscreen button bottom-right.
-
-## Notes on security
-
-Auth is a single email/password with a bcrypt-hashed credential and an
-HTTP-only session cookie. This is fine for a home/LAN setup. If you expose it to
-the internet, put it behind HTTPS (a reverse proxy like Caddy or nginx) — the
-session cookie is sent in the clear over plain HTTP otherwise.
-
-## Hosting in a Proxmox LXC (LAN-only, dedicated container)
-
-On the **Proxmox host**, create a Debian 12 unprivileged container:
+## Service management
 
 ```bash
-pveam download local debian-12-standard_12.7-1_amd64.tar.zst
-pct create 110 local:vztmpl/debian-12-standard_12.7-1_amd64.tar.zst \
-  --hostname streamvault --cores 2 --memory 1024 --swap 512 \
-  --rootfs local-lvm:16 --net0 name=eth0,bridge=vmbr0,ip=dhcp \
-  --unprivileged 1 --features nesting=1 --onboot 1
-pct start 110
-```
-
-Push the zip in and enter the container:
-
-```bash
-pct push 110 /path/to/streamvault.zip /root/streamvault.zip
-pct enter 110
-cd /opt && unzip /root/streamvault.zip && cd streamvault
-./install-lxc.sh
-```
-
-The installer sets up Node 20, ffmpeg, a `streamvault` service user, and a
-systemd service. Finish by setting a password and starting it:
-
-```bash
-sudo -u streamvault npm run set-password you@example.com 'your-password'
-systemctl start streamvault
-```
-
-Reach it on your LAN at `http://<LXC-ip>:8080`. Find the IP with `ip a`.
-
-### Bigger / separate disk for the library
-
-If your videos won't fit on the rootfs, add a mountpoint from the **host**:
-
-```bash
-pct set 110 -mp0 local-lvm:200,mp=/opt/streamvault/media
-```
-
-(or bind-mount an existing host directory). Re-run chown after:
-`chown -R streamvault:streamvault /opt/streamvault/media`. Drop files in and
-click **Rescan**.
-
-### Service management
-
-```bash
-systemctl status streamvault     # check it's running
+systemctl status streamvault
+systemctl restart streamvault
 journalctl -u streamvault -f     # live logs
-systemctl restart streamvault    # after editing config.json
+```
+
+## Bigger / external media disk
+
+Add a disk mountpoint from the Proxmox host:
+
+```bash
+pct set <CTID> -mp0 local-lvm:500,mp=/opt/streamvault/media
+```
+
+Or bind-mount an existing host directory. Re-run `chown -R streamvault:streamvault /opt/streamvault/media` after mounting.
+
+## Upgrading
+
+Re-run `install-lxc.sh` — it rebuilds the server and client, restarts the service if running, and leaves `config.json`, `secrets.json`, `media/`, and `thumbnails/` untouched.
+
+```bash
+cd /opt/streamvault
+git pull   # or re-extract the archive
+bash install-lxc.sh
 ```

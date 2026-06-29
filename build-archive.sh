@@ -11,17 +11,19 @@ SRC="app"
 
 tar -czf "$OUT" \
   --exclude='./node_modules' \
+  --exclude='./dist' \
+  --exclude='./client/node_modules' \
+  --exclude='./client/dist' \
   --exclude='./config.json' \
   --exclude='./secrets.json' \
   --exclude='./meta-cache.json' \
   --exclude='./server.log' \
   --exclude='./cookies.txt' \
-  --exclude='./thumbnails/*.jpg' \
-  --exclude='./thumbnails/*.vtt' \
-  --exclude='./media/*.mp4' \
-  --exclude='./.git' \
+  --exclude='./yt-dlp' \
+  --exclude='./thumbnails' \
+  --exclude='./media' \
   -C "$SRC" .
 
 echo "Wrote $OUT ($(du -h "$OUT" | cut -f1))"
-echo "Top-level entries:"
-tar -tzf "$OUT" | grep -vE '/.+/' | sed 's/^/  /'
+echo "Entries packed:"
+tar -tzf "$OUT" | grep -vE '/[^/]+/' | sed 's/^/  /'

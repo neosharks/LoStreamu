@@ -1,95 +1,104 @@
 # StreamVault
 
-A lightweight, self-hosted, auth-gated video streamer for your homelab — think a
-tiny Plex. Sign in, see your library with thumbnails, click to play at full
-resolution. The player is deliberately minimal: scrub timeline, 10-second skip,
-play/pause, next, fullscreen. Add videos by dropping files in a folder **or** by
-pasting a link (direct file, m3u8/HLS, or anything yt-dlp supports) — downloads
-show a live progress bar and are saved under randomized names.
+A self-hosted, auth-gated video streamer for your homelab — think a lightweight Plex. Sign in, browse your library with thumbnails, click to play in a full-featured mobile-friendly player. Add videos by pasting any URL yt-dlp supports (single video or whole playlist), or drop files into the media folder and rescan.
 
-## Install on Proxmox VE (one line)
+**Stack:** TypeScript (Express) backend · React 18 + Tailwind CSS frontend · Plyr video player · yt-dlp for downloads · ffmpeg for thumbnails
 
-Run this in the **Proxmox VE host shell** (Datacenter → your node → Shell):
+---
+
+## Install on Proxmox VE (one command)
+
+Run in the **Proxmox VE host shell** (Datacenter → your node → Shell):
 
 ```bash
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/thakursat/hosted-video-streamer/refs/heads/main/streamvault.sh)"
 ```
 
-> The script pulls the app from `streamvault-app.tar.gz` in this repo via the
-> `REPO_RAW` variable at the top of `streamvault.sh`. Forking? Override it with
-> `REPO_RAW=https://raw.githubusercontent.com/<you>/<repo>/main` before running.
+Creates a Debian 12 LXC, installs all dependencies, compiles the TypeScript server, builds the React frontend, and starts the app as a systemd service.
 
-This creates a Debian 12 LXC and installs everything (Node.js, ffmpeg, yt-dlp,
-the app, and a systemd service). **Defaults: 2 vCPU, 8 GB RAM, 200 GB disk,
-unprivileged, DHCP.**
+**Defaults:** 2 vCPU · 8 GB RAM · 200 GB disk · unprivileged · DHCP
 
-When it finishes it prints the access URL, e.g. `http://<container-ip>:8080`.
-
-### Create your account
-
-There is **no default password**. On the first visit the app shows a signup
-screen — pick your email and password there, and that becomes the single admin
-account. After that the signup screen is locked and only sign-in is shown.
-
-Change your email or password later from the in-app **Account** button. Forgot
-it? Reseed from the Proxmox host:
-
-```bash
-pct exec <CTID> -- bash -c "cd /opt/streamvault && sudo -u streamvault npm run set-password you@example.com 'your-password'"
-pct exec <CTID> -- systemctl restart streamvault
-```
-
-### Override the defaults
-
-Export variables before running the one-liner:
+Override before running:
 
 ```bash
 CT_RAM=4096 CT_DISK=100 CT_HOSTNAME=media \
   bash -c "$(curl -fsSL https://raw.githubusercontent.com/thakursat/hosted-video-streamer/refs/heads/main/streamvault.sh)"
 ```
 
-Available overrides: `CT_ID`, `CT_HOSTNAME`, `CT_CPU`, `CT_RAM` (MB), `CT_DISK`
-(GB), `CT_BRIDGE`, `CT_NET` (`dhcp` or `192.168.1.50/24`), `CT_GW`,
-`CT_UNPRIVILEGED`, `CT_STORAGE`, `TEMPLATE_STORAGE`.
+Available overrides: `CT_ID` `CT_HOSTNAME` `CT_CPU` `CT_RAM` (MB) `CT_DISK` (GB) `CT_BRIDGE` `CT_NET` (`dhcp` or `192.168.1.50/24`) `CT_GW` `CT_UNPRIVILEGED` `CT_STORAGE` `TEMPLATE_STORAGE`
 
-## Using it
+When it finishes it prints the access URL: `http://<container-ip>:8080`
 
-- **+ Add videos** → paste a link → live progress, with Cancel. Finished
-  downloads appear in the grid automatically.
-- Or copy files into `/opt/streamvault/media` inside the container, then click
-  **Rescan**.
-- Every downloaded video is saved into a randomly-named folder with a
-  randomly-named file; the source title is never written to disk or shown.
+---
+
+## First login
+
+There is no default password. On the first visit the app shows a **signup screen** — set your email and password there. After that the signup screen is locked permanently.
+
+**Forgot your password?** Reset from the Proxmox host:
+
+```bash
+pct exec <CTID> -- bash -c "cd /opt/streamvault && sudo -u streamvault npm run set-password you@email.com 'newpassword'"
+pct exec <CTID> -- systemctl restart streamvault
+```
+
+---
+
+## Features
+
+- **Library** — responsive grid with thumbnails, duration badges, folder tree sidebar, search, sort
+- **Player** — Plyr-based, mobile-friendly (swipe to close, iOS fullscreen), scrub preview thumbnails, resume position, auto-advance, playlist prev/next
+- **Downloads** — paste any yt-dlp-supported URL; live progress bar (speed + ETA); cancel mid-download
+- **Playlists** — preview playlist contents, select which items to download, batch download with per-item status, pause/resume/stop/skip
+- **Upload** — drag-and-drop or file picker with upload progress
+- **yt-dlp version indicator** — always visible in the navbar; shows current version, flags outdated, one-click update
+- **Proxy support** — set an HTTP/SOCKS5 proxy in Account → Network settings for blocked sites
+- **Folder management** — create, rename, delete folders; move videos between folders; bulk delete
+
+---
 
 ## Updating
 
+Re-run the installer inside the container — it detects an existing install, rebuilds, and restarts the service automatically:
+
 ```bash
-pct exec <CTID> -- bash -c "curl -fsSL https://raw.githubusercontent.com/thakursat/hosted-video-streamer/refs/heads/main/streamvault-app.tar.gz -o /tmp/sv.tar.gz && tar -xzf /tmp/sv.tar.gz -C /opt/streamvault && cd /opt/streamvault && npm install --omit=dev && chown -R streamvault:streamvault /opt/streamvault && systemctl restart streamvault"
+pct exec <CTID> -- bash -c "curl -fsSL https://raw.githubusercontent.com/thakursat/hosted-video-streamer/refs/heads/main/streamvault-app.tar.gz | tar -xz -C /opt/streamvault && bash /opt/streamvault/install-lxc.sh"
 ```
 
-(Your `config.json` and `media/` are preserved.)
+`config.json`, `media/`, `thumbnails/`, and `secrets.json` are preserved.
 
-## Maintainers: how to (re)build the app archive
+---
 
-`streamvault.sh` downloads `streamvault-app.tar.gz`. Rebuild it after any code
-change and commit it alongside the script:
+## Service management
+
+```bash
+pct exec <CTID> -- systemctl start streamvault
+pct exec <CTID> -- systemctl status streamvault
+pct exec <CTID> -- journalctl -u streamvault -f     # live logs
+pct exec <CTID> -- systemctl restart streamvault    # after config changes
+```
+
+---
+
+## Manual install (no Proxmox)
+
+See [README-app.md](README-app.md) for installing directly on any Debian/Ubuntu host or macOS.
+
+---
+
+## Maintainers: rebuild the app archive
+
+`streamvault.sh` downloads `streamvault-app.tar.gz` (source files only — the archive is built on the container). Rebuild after code changes:
 
 ```bash
 ./build-archive.sh
-git add streamvault-app.tar.gz && git commit -m "Update app archive" && git push
+git add streamvault-app.tar.gz && git commit -m "chore: update app archive" && git push
 ```
+
+---
 
 ## Notes
 
-- **Browser codec support:** mp4 (H.264/AAC) and webm play everywhere; mkv and
-  some codecs may not decode in all browsers. Keep media as mp4 for trouble-free
-  playback. Downloads are merged to mp4 where possible.
-- **LAN use:** auth is a single bcrypt-hashed email/password over an HTTP-only
-  session cookie. For internet exposure, put it behind HTTPS (reverse proxy).
-- **yt-dlp** self-updates; if a site changes, run
-  `pct exec <CTID> -- yt-dlp -U` inside the container.
-
-## Manual / non-Proxmox install
-
-See [`README-app.md`](README-app.md) for running it directly (any Debian/Ubuntu
-host or your Mac) without the Proxmox helper.
+- **Browser codec support:** mp4 (H.264/AAC) and webm play everywhere. mkv and some codecs may not decode in all browsers. yt-dlp merges downloads to mp4 where possible.
+- **Security:** bcrypt-hashed password, HTTP-only session cookie. Fine for LAN. Put it behind HTTPS (Caddy, nginx) if exposed to the internet.
+- **Cookies for gated content:** drop a Netscape-format `cookies.txt` next to the app at `/opt/streamvault/cookies.txt` — it's picked up automatically for all downloads.
