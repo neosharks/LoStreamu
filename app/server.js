@@ -178,6 +178,48 @@ async function buildMeta() {
 buildMeta().catch(() => {});
 
 // ---------------------------------------------------------------------------
+// Scrub-preview sprites — a tiled JPEG of frames + a WebVTT mapping time →
+// sprite region, consumed by the player's preview-thumbnails (peek) feature.
+// ---------------------------------------------------------------------------
+const SPRITE_COLS = 10, SPRITE_W = 160, SPRITE_H = 90;
+const spriteJobs = new Map(); // id -> Promise
+function spritePaths(id) { return { jpg: join(THUMB_DIR, id + '.sprite.jpg'), vtt: join(THUMB_DIR, id + '.vtt') }; }
+function vttStamp(t) {
+  const h = Math.floor(t / 3600), m = Math.floor(t % 3600 / 60), s = Math.floor(t % 60);
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.000`;
+}
+function ensureSprite(item) {
+  if (spriteJobs.has(item.id)) return spriteJobs.get(item.id);
+  const job = (async () => {
+    const { jpg, vtt } = spritePaths(item.id);
+    if (fs.existsSync(jpg) && fs.existsSync(vtt)) return { jpg, vtt };
+    const meta = await getMeta(item);
+    const dur = meta && meta.duration ? meta.duration : 0;
+    if (!dur) return null;
+    const target = Math.min(120, Math.max(20, Math.floor(dur / 10)));
+    const interval = Math.max(1, Math.floor(dur / target));
+    const count = Math.max(1, Math.floor(dur / interval));
+    const rows = Math.ceil(count / SPRITE_COLS);
+    await new Promise((resolve) => {
+      execFile('ffmpeg', ['-y', '-i', item.full,
+        '-vf', `fps=1/${interval},scale=${SPRITE_W}:${SPRITE_H},tile=${SPRITE_COLS}x${rows}`,
+        '-frames:v', '1', '-q:v', '4', jpg], { timeout: 120000 }, () => resolve());
+    });
+    if (!fs.existsSync(jpg)) return null;
+    let out = 'WEBVTT\n\n';
+    for (let i = 0; i < count; i++) {
+      const start = i * interval, end = Math.min(dur, (i + 1) * interval);
+      const x = (i % SPRITE_COLS) * SPRITE_W, y = Math.floor(i / SPRITE_COLS) * SPRITE_H;
+      out += `${vttStamp(start)} --> ${vttStamp(end)}\n/api/videos/${item.id}/sprite.jpg#xywh=${x},${y},${SPRITE_W},${SPRITE_H}\n\n`;
+    }
+    fs.writeFileSync(vtt, out);
+    return { jpg, vtt };
+  })().finally(() => spriteJobs.delete(item.id));
+  spriteJobs.set(item.id, job);
+  return job;
+}
+
+// ---------------------------------------------------------------------------
 // Server usage stats (cached briefly — these calls hit the filesystem).
 // ---------------------------------------------------------------------------
 let statsCache = null, statsCacheAt = 0;
@@ -518,6 +560,22 @@ app.get('/api/videos/:id/info', requireAuth, async (req, res) => {
   if (!item) return res.status(404).end();
   const meta = await getMeta(item);
   res.json({ id: item.id, name: item.name, ext: extname(item.full).slice(1).toLowerCase(), ...meta });
+});
+
+// Scrub-preview sprite sheet + its WebVTT index (peek thumbnails).
+app.get('/api/videos/:id/sprite.jpg', requireAuth, async (req, res) => {
+  const item = library.find(v => v.id === req.params.id);
+  if (!item) return res.status(404).end();
+  const sp = await ensureSprite(item);
+  if (!sp) return res.status(404).end();
+  res.sendFile(sp.jpg);
+});
+app.get('/api/videos/:id/thumbs.vtt', requireAuth, async (req, res) => {
+  const item = library.find(v => v.id === req.params.id);
+  if (!item) return res.status(404).end();
+  const sp = await ensureSprite(item);
+  if (!sp) return res.status(404).end();
+  res.type('text/vtt').sendFile(sp.vtt);
 });
 
 // Download the original file to the client.

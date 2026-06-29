@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>StreamVault</title>
+<link rel="stylesheet" href="/vendor/plyr.css">
 <style>
   :root {
     --bg: #0a0b0d;
@@ -126,46 +127,44 @@
   .empty { color: var(--muted); text-align: center; padding: 90px 20px; }
   .empty code { background: var(--panel-2); padding: 2px 7px; border-radius: 5px; color: var(--accent); }
 
-  /* Player overlay */
-  .player { position: fixed; inset: 0; background: #000; z-index: 50; display: none; }
-  .player.open { display: block; }
-  .player video { width: 100%; height: 100%; object-fit: contain; background: #000; }
-
-  .pbar { position: absolute; left: 0; right: 0; bottom: 0;
-    padding: 18px 24px 22px; opacity: 0; transition: opacity .2s;
-    background: linear-gradient(transparent, rgba(0,0,0,.75)); }
-  .player.show-ui .pbar, .player.paused .pbar { opacity: 1; }
-  .ptop { position: absolute; top: 0; left: 0; right: 0; padding: 16px 24px;
-    display: flex; align-items: center; justify-content: space-between;
-    opacity: 0; transition: opacity .2s;
-    background: linear-gradient(rgba(0,0,0,.7), transparent); }
-  .player.show-ui .ptop, .player.paused .ptop { opacity: 1; }
-  .ptitle { font-size: 0.95rem; font-weight: 550; max-width: 70%;
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* Base icon button (used by modal close buttons + player overlay) */
   .iconbtn { background: rgba(255,255,255,.08); border: none; color: var(--text);
     width: 40px; height: 40px; border-radius: 50%; cursor: pointer;
     display: grid; place-items: center; transition: background .15s; }
   .iconbtn:hover { background: rgba(255,255,255,.18); }
   .iconbtn svg { width: 20px; height: 20px; }
-  .iconbtn.skip { width: auto; padding: 0 12px; gap: 4px; border-radius: 20px; font-size: .72rem; font-weight: 600; }
-  .iconbtn.skip svg { width: 17px; height: 17px; }
-  .big { width: 56px; height: 56px; background: var(--accent); color: #1a1300; }
-  .big:hover { background: var(--accent); filter: brightness(1.08); }
-  .big svg { width: 26px; height: 26px; }
 
-  .controls { display: flex; align-items: center; gap: 16px; margin-top: 12px; }
-  .time { font-size: 0.78rem; color: #cfd2d8; font-variant-numeric: tabular-nums; min-width: 92px; }
-  .seek { flex: 1; height: 5px; background: rgba(255,255,255,.2); border-radius: 3px;
-    position: relative; cursor: pointer; }
-  .seek .buf { position: absolute; left: 0; top: 0; bottom: 0; background: rgba(255,255,255,.25); border-radius: 3px; }
-  .seek .fill { position: absolute; left: 0; top: 0; bottom: 0; background: var(--accent); border-radius: 3px; width: 0; }
-  .seek .knob { position: absolute; top: 50%; width: 13px; height: 13px; border-radius: 50%;
-    background: var(--accent); transform: translate(-50%, -50%); left: 0; }
-  .center-row { display: flex; align-items: center; justify-content: center; gap: 28px;
-    position: absolute; top: 50%; left: 0; right: 0; transform: translateY(-50%);
-    pointer-events: none; opacity: 0; transition: opacity .2s; }
-  .player.show-ui .center-row, .player.paused .center-row { opacity: 1; }
-  .center-row .iconbtn { pointer-events: auto; }
+  /* Player overlay (Plyr lives inside) */
+  .player { position: fixed; inset: 0; background: #000; z-index: 50; display: none;
+    opacity: 0; transition: opacity .2s; }
+  .player.open { display: flex; opacity: 1; align-items: center; justify-content: center; }
+  .player-stage { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; }
+  .player-stage .plyr { width: 100%; height: 100%; }
+  .player-stage .plyr video { width: 100%; height: 100%; object-fit: contain; background: #000; }
+  .player-close { position: absolute; top: 16px; right: 16px; z-index: 60; }
+  .player-title { position: absolute; top: 18px; left: 22px; z-index: 60; max-width: 60%;
+    font-size: .95rem; font-weight: 600; color: #fff; text-shadow: 0 1px 6px rgba(0,0,0,.7);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    opacity: 0; transition: opacity .2s; pointer-events: none; }
+  .player.show-ctrl .player-title, .player.show-ctrl .player-close { opacity: 1; }
+  .player:not(.show-ctrl) .player-close { opacity: 0; transition: opacity .2s; }
+
+  /* Plyr theme — match the app's gold accent + dark surfaces */
+  :root {
+    --plyr-color-main: #f5c542;
+    --plyr-video-background: #000;
+    --plyr-menu-background: rgba(20,22,27,.97);
+    --plyr-menu-color: #eceef2;
+    --plyr-video-control-color: #eceef2;
+    --plyr-video-control-color-hover: #1a1300;
+    --plyr-badge-background: #f5c542;
+    --plyr-badge-text-color: #1a1300;
+    --plyr-tooltip-background: rgba(20,22,27,.97);
+    --plyr-tooltip-color: #eceef2;
+    --plyr-font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --plyr-font-size-base: 15px;
+    --plyr-range-thumb-background: #f5c542;
+  }
 
   /* Add-videos modal */
   .dl-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.6); backdrop-filter: blur(3px);
@@ -434,62 +433,22 @@
   </main>
 
   <div class="player" id="player">
-    <video id="video" playsinline></video>
-
-    <div class="ptop">
-      <span class="ptitle" id="ptitle"></span>
-      <div style="display:flex;gap:10px;align-items:center">
-        <button class="iconbtn" id="pdownload" title="Download">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>
-        </button>
-        <button class="iconbtn" id="close" title="Close">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6L6 18"/></svg>
-        </button>
-      </div>
-    </div>
-
-    <div class="center-row">
-      <button class="iconbtn skip" id="back10" title="Back 10s">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 5L4 12l7 7M4 12h11a5 5 0 1 1 0 10h-1"/></svg>10
-      </button>
-      <button class="iconbtn big" id="bigplay">
-        <svg id="bigicon" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
-      </button>
-      <button class="iconbtn skip" id="fwd10" title="Forward 10s">10
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 5l7 7-7 7M20 12H9a5 5 0 1 0 0 10h1"/></svg>
-      </button>
-    </div>
-
-    <div class="pbar">
-      <div class="seek" id="seek">
-        <div class="buf" id="buf"></div>
-        <div class="fill" id="fill"></div>
-        <div class="knob" id="knob"></div>
-      </div>
-      <div class="controls">
-        <button class="iconbtn" id="play2">
-          <svg id="play2icon" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
-        </button>
-        <span class="time" id="time">0:00 / 0:00</span>
-        <button class="iconbtn" id="next" title="Next video">
-          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 5v14l9-7zM16 5h2v14h-2z"/></svg>
-        </button>
-        <button class="iconbtn" id="full" title="Fullscreen" style="margin-left:auto">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
-        </button>
-      </div>
+    <span class="player-title" id="ptitle"></span>
+    <button class="iconbtn player-close" id="close" title="Close (Esc)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+    <div class="player-stage">
+      <video id="video" playsinline crossorigin></video>
     </div>
   </div>
 
+<script src="/vendor/plyr.min.js"></script>
 <script>
 const grid = document.getElementById('grid');
 const empty = document.getElementById('empty');
 const countEl = document.getElementById('count');
 let videos = [];
 let current = -1;
-
-const PLAY = '<path d="M8 5v14l11-7z"/>';
-const PAUSE = '<path d="M7 5h3v14H7zM14 5h3v14h-3z"/>';
 
 async function load() {
   const r = await fetch('/api/videos');
@@ -545,110 +504,83 @@ document.getElementById('search').addEventListener('input', e => { query = e.tar
 
 function escapeHtml(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 
-// ---- Player ----
+// ---- Player (Plyr) ----
 const player = document.getElementById('player');
 const video = document.getElementById('video');
 const ptitle = document.getElementById('ptitle');
-const fill = document.getElementById('fill');
-const buf = document.getElementById('buf');
-const knob = document.getElementById('knob');
-const timeEl = document.getElementById('time');
-const seek = document.getElementById('seek');
-const bigicon = document.getElementById('bigicon');
-const play2icon = document.getElementById('play2icon');
+const LS = window.localStorage;
+const posKey = id => 'sv:pos:' + id;
+
+const plyr = new Plyr(video, {
+  iconUrl: '/vendor/plyr.svg',
+  blankVideo: '',
+  controls: ['play-large', 'restart', 'rewind', 'play', 'fast-forward', 'progress',
+    'current-time', 'duration', 'mute', 'volume', 'settings', 'pip', 'airplay', 'download', 'fullscreen'],
+  settings: ['speed'],
+  speed: { selected: 1, options: [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2] },
+  seekTime: 10,
+  keyboard: { focused: true, global: true },
+  tooltips: { controls: true, seek: true },
+  storage: { enabled: true, key: 'plyr' },           // persists volume + speed
+  previewThumbnails: { enabled: true, src: '' }       // peek thumbnails (set per video)
+});
+
+let savePosTimer = null;
 
 function playIndex(i) {
   current = i;
   const v = videos[i];
   ptitle.textContent = v.name;
-  video.src = '/stream/' + v.id;
-  player.classList.add('open');
-  video.play().catch(()=>{});
-  flashUI();
+  player.classList.add('open', 'show-ctrl');
+  // Per-video scrub-preview (peek) source.
+  plyr.config.previewThumbnails.src = '/api/videos/' + v.id + '/thumbs.vtt';
+  plyr.source = {
+    type: 'video',
+    title: v.name,
+    sources: [{ src: '/stream/' + v.id, type: 'video/mp4' }],
+    poster: '/thumb/' + v.id
+  };
+  plyr.download = location.origin + '/api/videos/' + v.id + '/download'; // wire the Download control
+  plyr.once('loadedmetadata', () => {
+    const saved = parseFloat(LS.getItem(posKey(v.id)) || '0');
+    if (saved > 5 && plyr.duration && saved < plyr.duration - 15) plyr.currentTime = saved;
+    plyr.play().catch(() => {});
+  });
 }
 
-function togglePlay() { video.paused ? video.play() : video.pause(); }
-function setIcons() {
-  const g = video.paused ? PLAY : PAUSE;
-  bigicon.innerHTML = g; play2icon.innerHTML = g;
-  player.classList.toggle('paused', video.paused);
-}
-video.addEventListener('play', setIcons);
-video.addEventListener('pause', setIcons);
-
-function fmt(t) {
-  if (!isFinite(t)) return '0:00';
-  t = Math.floor(t);
-  const h = Math.floor(t/3600), m = Math.floor((t%3600)/60), s = t%60;
-  return (h ? h + ':' + String(m).padStart(2,'0') : m) + ':' + String(s).padStart(2,'0');
-}
-video.addEventListener('timeupdate', () => {
-  const p = video.duration ? (video.currentTime / video.duration) * 100 : 0;
-  fill.style.width = p + '%';
-  knob.style.left = p + '%';
-  timeEl.textContent = fmt(video.currentTime) + ' / ' + fmt(video.duration);
+plyr.on('timeupdate', () => {
+  const v = videos[current]; if (!v || savePosTimer) return;
+  savePosTimer = setTimeout(() => {
+    savePosTimer = null;
+    if (plyr.currentTime > 3 && plyr.duration && plyr.currentTime < plyr.duration - 5)
+      try { LS.setItem(posKey(v.id), String(Math.floor(plyr.currentTime))); } catch {}
+  }, 3000);
 });
-video.addEventListener('progress', () => {
-  if (video.buffered.length && video.duration) {
-    buf.style.width = (video.buffered.end(video.buffered.length-1) / video.duration) * 100 + '%';
-  }
+plyr.on('ended', () => {
+  const v = videos[current]; if (v) try { LS.removeItem(posKey(v.id)); } catch {}
+  playNext();
 });
+plyr.on('controlsshown', () => player.classList.add('show-ctrl'));
+plyr.on('controlshidden', () => player.classList.remove('show-ctrl'));
 
-function seekTo(e) {
-  const rect = seek.getBoundingClientRect();
-  const ratio = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
-  if (video.duration) video.currentTime = ratio * video.duration;
-}
-let dragging = false;
-seek.addEventListener('mousedown', e => { dragging = true; seekTo(e); });
-window.addEventListener('mousemove', e => { if (dragging) seekTo(e); });
-window.addEventListener('mouseup', () => dragging = false);
-
-document.getElementById('bigplay').addEventListener('click', togglePlay);
-document.getElementById('play2').addEventListener('click', togglePlay);
-video.addEventListener('click', togglePlay);
-document.getElementById('back10').addEventListener('click', () => video.currentTime -= 10);
-document.getElementById('fwd10').addEventListener('click', () => video.currentTime += 10);
-document.getElementById('next').addEventListener('click', playNext);
 function playNext() {
   if (current + 1 < videos.length) playIndex(current + 1);
   else closePlayer();
 }
-video.addEventListener('ended', playNext);
-
-document.getElementById('full').addEventListener('click', () => {
-  if (document.fullscreenElement) document.exitFullscreen();
-  else player.requestFullscreen().catch(()=>{});
-});
 
 function closePlayer() {
+  const v = videos[current];
+  if (v && plyr.currentTime > 5 && plyr.duration && plyr.currentTime < plyr.duration - 15)
+    try { LS.setItem(posKey(v.id), String(Math.floor(plyr.currentTime))); } catch {}
+  try { plyr.stop(); } catch {}
   player.classList.remove('open');
-  video.pause(); video.removeAttribute('src'); video.load();
 }
 document.getElementById('close').addEventListener('click', closePlayer);
-document.getElementById('pdownload').addEventListener('click', () => {
-  if (current >= 0 && videos[current]) downloadVideo(videos[current].id);
-});
 
-// Auto-hide UI on inactivity
-let hideTimer;
-function flashUI() {
-  player.classList.add('show-ui');
-  clearTimeout(hideTimer);
-  hideTimer = setTimeout(() => player.classList.remove('show-ui'), 2600);
-}
-player.addEventListener('mousemove', flashUI);
-player.addEventListener('click', flashUI);
-
-// Keyboard
+// Esc closes the overlay (Plyr handles exiting its own fullscreen first).
 window.addEventListener('keydown', e => {
-  if (!player.classList.contains('open')) return;
-  if (e.key === ' ') { e.preventDefault(); togglePlay(); }
-  else if (e.key === 'ArrowLeft') video.currentTime -= 10;
-  else if (e.key === 'ArrowRight') video.currentTime += 10;
-  else if (e.key === 'Escape' && !document.fullscreenElement) closePlayer();
-  else if (e.key === 'n') playNext();
-  flashUI();
+  if (e.key === 'Escape' && player.classList.contains('open') &&
+      !document.fullscreenElement && !plyr.fullscreen.active) closePlayer();
 });
 
 // Header actions

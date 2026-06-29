@@ -16,6 +16,9 @@ tar -czf "$OUT" \
   --exclude='./meta-cache.json' \
   --exclude='./server.log' \
   --exclude='./cookies.txt' \
+  --exclude='./thumbnails/*.jpg' \
+  --exclude='./thumbnails/*.vtt' \
+  --exclude='./media/*.mp4' \
   --exclude='./.git' \
   -C "$SRC" .
 

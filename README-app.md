@@ -2,9 +2,11 @@
 
 A lightweight, self-hosted, auth-gated video streamer. Like a tiny Plex: drop
 files into a folder, sign in, and everything shows up with thumbnails. Click a
-video and it plays at full resolution. The player is deliberately minimal — a
-scrub timeline, 10-second skip back/forward, play/pause, next, and fullscreen.
-No quality menus, no settings to fiddle with.
+video and it plays at full resolution in a polished [Plyr](https://plyr.io)
+player (vendored locally, no CDN at runtime): scrub-bar **peek thumbnails**,
+playback speed, volume, mute, Picture-in-Picture, download, fullscreen, full
+keyboard control, and automatic resume where you left off. Plays the next video
+automatically.
 
 Each card shows a duration badge, resolution, and size, with hover actions to
 **download** the original file or open an **info** panel (resolution, codecs,

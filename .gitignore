@@ -8,6 +8,7 @@ app/cookies.txt
 app/media/*
 !app/media/.gitkeep
 app/thumbnails/*.jpg
+app/thumbnails/*.vtt
 !app/thumbnails/.gitkeep
 
 # NOTE: streamvault-app.tar.gz IS committed on purpose (the installer pulls it).
