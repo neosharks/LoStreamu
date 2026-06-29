@@ -1517,8 +1517,12 @@ function openStats() {
 function closeStats() { statsModal.classList.remove('open'); statsBackdrop.classList.remove('open'); }
 
 async function loadStats() {
-  let s = null;
-  try { const r = await fetch('/api/stats'); if (r.ok) s = await r.json(); } catch {}
+  let s = null, yt = null;
+  try {
+    const [sr, yr] = await Promise.all([fetch('/api/stats'), fetch('/api/ytdlp/version')]);
+    if (sr.ok) s = await sr.json();
+    if (yr.ok) yt = await yr.json();
+  } catch {}
   if (!s) { statsBody.innerHTML = '<div class="dl-empty">Could not load stats.</div>'; return; }
   const gauge = (lbl, used, total) => {
     const pct = total ? (used / total) * 100 : 0;
@@ -1528,6 +1532,19 @@ async function loadStats() {
       <div class="gauge-bar"><div class="gauge-fill ${cls}" style="width:${pct.toFixed(1)}%"></div></div></div>`;
   };
   const fmtUp = sec => { sec = Math.floor(sec || 0); const d = Math.floor(sec / 86400), h = Math.floor(sec % 86400 / 3600), m = Math.floor(sec % 3600 / 60); return (d ? d + 'd ' : '') + (h ? h + 'h ' : '') + m + 'm'; };
+  const ytRow = yt ? (() => {
+    const badge = yt.outdated
+      ? `<span style="color:#f5c542;font-size:.75rem;margin-left:4px">→ ${escapeHtml(yt.latest)} available</span>`
+      : (yt.latest ? `<span style="color:var(--muted);font-size:.75rem;margin-left:4px">up to date</span>` : '');
+    return `<div class="stat-row">
+      <span class="stat-k">yt-dlp</span>
+      <span class="stat-v" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <span>${escapeHtml(yt.current || '(unknown)')}</span>${badge}
+        <button class="btn" id="statsYtUpdate" style="padding:2px 9px;font-size:.72rem">Update</button>
+        <span id="statsYtMsg" style="font-size:.75rem;color:var(--muted)"></span>
+      </span>
+    </div>`;
+  })() : '';
   statsBody.innerHTML = `
     <div class="stat-grid">
       <div class="stat-chip"><div class="n">${s.videos}</div><div class="l">Videos</div></div>
@@ -1545,7 +1562,19 @@ async function loadStats() {
       <div class="stat-row"><span class="stat-k">App uptime</span><span class="stat-v">${fmtUp(s.uptime.process)}</span></div>
       <div class="stat-row"><span class="stat-k">Node</span><span class="stat-v">${escapeHtml(s.node)}</span></div>
       <div class="stat-row"><span class="stat-k">Platform</span><span class="stat-v">${escapeHtml(s.platform)}</span></div>
+      ${ytRow}
     </div>`;
+  const ytBtn = document.getElementById('statsYtUpdate');
+  if (ytBtn) ytBtn.addEventListener('click', async () => {
+    const msg = document.getElementById('statsYtMsg');
+    ytBtn.disabled = true; ytBtn.textContent = 'Updating…';
+    try {
+      const r = await fetch('/api/ytdlp/update', { method: 'POST' });
+      const d = await r.json().catch(() => ({}));
+      if (r.ok) { msg.textContent = 'Updated!'; ytBtn.textContent = 'Done'; loadStats(); }
+      else { msg.textContent = d.error || 'Failed.'; ytBtn.disabled = false; ytBtn.textContent = 'Retry'; }
+    } catch { msg.textContent = 'Network error.'; ytBtn.disabled = false; ytBtn.textContent = 'Retry'; }
+  });
 }
 document.getElementById('stats').addEventListener('click', openStats);
 document.getElementById('statsClose').addEventListener('click', closeStats);
