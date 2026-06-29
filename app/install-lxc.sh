@@ -238,6 +238,7 @@ fi
 
 # Allow the service user to install chromium without a password (needed for in-app updates)
 SUDOERS_FILE="/etc/sudoers.d/streamvault"
+mkdir -p /etc/sudoers.d
 cat >"$SUDOERS_FILE" <<SUDOERS
 streamvault ALL=(ALL) NOPASSWD: /usr/bin/apt-get install -y --no-install-recommends chromium
 SUDOERS

@@ -1,9 +1,16 @@
 import api from './client';
 import type { YtDlpVersion } from '../types';
 
+export interface AppVersion {
+  current: string | null;
+  latest: string | null;
+  updateAvailable: boolean;
+}
+
 export const settingsApi = {
   getProxy: () => api.get<{ proxy: string }>('/settings').then(r => r.data),
   setProxy: (proxy: string) => api.post('/settings', { proxy }).then(r => r.data),
+  appVersion: () => api.get<AppVersion>('/app/version').then(r => r.data),
   ytdlpVersion: () => api.get<YtDlpVersion>('/ytdlp/version').then(r => r.data),
   ytdlpUpdate: () => api.post<{ ok: boolean; version: string }>('/ytdlp/update').then(r => r.data),
   appUpdateUrl: () => `${api.defaults.baseURL}/app/update/stream`,

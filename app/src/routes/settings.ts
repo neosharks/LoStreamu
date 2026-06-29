@@ -1,7 +1,9 @@
 import { Router } from 'express';
 import { z } from 'zod';
+import fs from 'fs';
+import path from 'path';
 import { requireAuth } from '../middleware/auth';
-import { getConfig, saveConfig } from '../config';
+import { getConfig, saveConfig, APP_DIR } from '../config';
 import { getYtDlpVersion, updateYtDlp } from '../services/ytdlp';
 
 const router = Router();
@@ -23,6 +25,32 @@ router.post('/settings', requireAuth, (req, res) => {
   }
   saveConfig({ proxy: parsed.data.proxy });
   res.json({ ok: true, proxy: parsed.data.proxy });
+});
+
+let _appLatestCache: { version: string | null; at: number } = { version: null, at: 0 };
+const APP_VERSION_TTL = 6 * 60 * 60 * 1000;
+
+router.get('/app/version', requireAuth, async (_req, res) => {
+  let current: string | null = null;
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(APP_DIR, 'package.json'), 'utf8'));
+    current = pkg.version ?? null;
+  } catch {}
+
+  const now = Date.now();
+  if (!_appLatestCache.version || now - _appLatestCache.at > APP_VERSION_TTL) {
+    try {
+      const r = await fetch(
+        'https://raw.githubusercontent.com/thakursat/hosted-video-streamer/main/app/package.json',
+        { headers: { 'User-Agent': 'streamvault/2' } },
+      );
+      const data = await r.json() as { version?: string };
+      _appLatestCache = { version: data.version ?? null, at: now };
+    } catch {}
+  }
+
+  const latest = _appLatestCache.version;
+  res.json({ current, latest, updateAvailable: !!(current && latest && current !== latest) });
 });
 
 router.get('/ytdlp/version', requireAuth, async (_req, res) => {

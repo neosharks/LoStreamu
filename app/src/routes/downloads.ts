@@ -6,6 +6,7 @@ import type { Response } from 'express';
 import { requireAuth } from '../middleware/auth';
 import { rescan, safePath, getMediaRoot } from '../services/library';
 import { ytNetArgs, spawnDownload, fetchMeta, netHint, normalizeUrl } from '../services/ytdlp';
+import { fetchCookiesViaBrowser } from '../services/browserCookies';
 import { buildMeta } from '../services/library';
 import type { DownloadJob } from '../types';
 
@@ -78,55 +79,85 @@ router.post('/download', requireAuth, async (req, res) => {
     broadcast(id, 'status', job);
   }).catch(() => {});
 
-  const args = [
-    '--newline', '--no-mtime', '--no-warnings', '--continue',
-    '--download-archive', archivePath,
-    ...ytNetArgs(),
-    '--no-playlist',
-    '-f', 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best',
-    '--merge-output-format', 'mp4',
-    '-o', outTpl,
-    url,
-  ];
+  function buildArgs() {
+    return [
+      '--newline', '--no-mtime', '--no-warnings', '--continue',
+      '--download-archive', archivePath,
+      ...ytNetArgs(),
+      '--no-playlist',
+      '-f', 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best',
+      '--merge-output-format', 'mp4',
+      '-o', outTpl,
+      url,
+    ];
+  }
 
-  const proc = spawnDownload(args);
+  function startProc(args: string[], onAgeGate: () => void) {
+    const proc = spawnDownload(args);
+
+    proc.stdout.on('data', (chunk: Buffer) => {
+      const lines = chunk.toString().split('\n');
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        const pctM = line.match(/(\d+\.?\d*)%/);
+        if (pctM) job.progress = parseFloat(pctM[1]);
+        const speedM = line.match(/at\s+([\d.]+\w+\/s)/);
+        if (speedM) job.speed = speedM[1];
+        const etaM = line.match(/ETA\s+(\S+)/);
+        if (etaM) job.eta = etaM[1];
+        if (line.includes('[Merger]') || line.includes('[ffmpeg]')) job.status = 'processing';
+        broadcast(id, 'progress', { progress: job.progress, speed: job.speed, eta: job.eta, status: job.status });
+      }
+    });
+
+    proc.stderr.on('data', (chunk: Buffer) => {
+      const text = chunk.toString();
+      if (text.includes('ERROR') || text.includes('error')) {
+        job.error = netHint(text.trim().split('\n')[0]);
+      }
+    });
+
+    proc.on('close', (code) => {
+      if (code === 0) {
+        job.status = 'done';
+        job.progress = 100;
+        broadcast(id, 'status', job);
+        rescan();
+        buildMeta().catch(() => {});
+      } else if (/410|403|age.?gate/i.test(job.error || '')) {
+        onAgeGate();
+      } else {
+        job.status = 'error';
+        job.error = job.error || `yt-dlp exited with code ${code}`;
+        broadcast(id, 'status', job);
+        rescan();
+        buildMeta().catch(() => {});
+      }
+    });
+
+    return proc;
+  }
+
+  let retried = false;
+  function onAgeGate() {
+    if (retried) {
+      job.status = 'error';
+      broadcast(id, 'status', job);
+      return;
+    }
+    retried = true;
+    job.error = undefined;
+    job.progress = 0;
+    broadcast(id, 'status', job);
+    fetchCookiesViaBrowser(url)
+      .then(() => startProc(buildArgs(), onAgeGate))
+      .catch(() => { job.status = 'error'; broadcast(id, 'status', job); });
+  }
+
+  const proc = startProc(buildArgs(), onAgeGate);
   job.status = 'downloading';
   broadcast(id, 'status', job);
-
-  proc.stdout.on('data', (chunk: Buffer) => {
-    const lines = chunk.toString().split('\n');
-    for (const line of lines) {
-      if (!line.trim()) continue;
-      const pctM = line.match(/(\d+\.?\d*)%/);
-      if (pctM) job.progress = parseFloat(pctM[1]);
-      const speedM = line.match(/at\s+([\d.]+\w+\/s)/);
-      if (speedM) job.speed = speedM[1];
-      const etaM = line.match(/ETA\s+(\S+)/);
-      if (etaM) job.eta = etaM[1];
-      if (line.includes('[Merger]') || line.includes('[ffmpeg]')) job.status = 'processing';
-      broadcast(id, 'progress', { progress: job.progress, speed: job.speed, eta: job.eta, status: job.status });
-    }
-  });
-
-  proc.stderr.on('data', (chunk: Buffer) => {
-    const text = chunk.toString();
-    if (text.includes('ERROR') || text.includes('error')) {
-      job.error = netHint(text.trim().split('\n')[0]);
-    }
-  });
-
-  proc.on('close', (code) => {
-    if (code === 0) {
-      job.status = 'done';
-      job.progress = 100;
-    } else if (job.status !== 'error') {
-      job.status = 'error';
-      job.error = job.error || `yt-dlp exited with code ${code}`;
-    }
-    broadcast(id, 'status', job);
-    rescan();
-    buildMeta().catch(() => {});
-  });
+  void proc;
 });
 
 router.post('/download/:id/cancel', requireAuth, (req, res) => {

@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { BarChart2, RefreshCw, Settings, LogOut, Plus } from 'lucide-react';
 import { toast } from 'sonner';
@@ -5,6 +6,7 @@ import { Button } from './ui/button';
 import { settingsApi, authApi } from '@/api/settings';
 import { videosApi } from '@/api/videos';
 import { cn } from '@/lib/utils';
+import { AppUpdateModal } from './AppUpdateModal';
 
 interface HeaderProps {
   onAddVideos: () => void;
@@ -17,6 +19,14 @@ interface HeaderProps {
 
 export function Header({ onAddVideos, onStats, onAccount, videoCount, search, onSearch }: HeaderProps) {
   const qc = useQueryClient();
+  const [showUpdate, setShowUpdate] = useState(false);
+
+  const { data: appVersion } = useQuery({
+    queryKey: ['app-version'],
+    queryFn: settingsApi.appVersion,
+    staleTime: 60 * 60 * 1000,
+    retry: false,
+  });
 
   const { data: ytdlp } = useQuery({
     queryKey: ['ytdlp-version'],
@@ -79,6 +89,27 @@ export function Header({ onAddVideos, onStats, onAccount, videoCount, search, on
         {videoCount} {videoCount === 1 ? 'video' : 'videos'}
       </span>
 
+      {/* App version */}
+      {appVersion?.current && (
+        <div className="hidden items-center gap-2 sm:flex shrink-0">
+          <div className={cn('h-1.5 w-1.5 rounded-full', appVersion.updateAvailable ? 'bg-warning' : 'bg-success')} />
+          <span className={cn('text-xs', appVersion.updateAvailable ? 'text-warning' : 'text-text-muted')}>
+            v{appVersion.current}
+            {appVersion.updateAvailable && ` → v${appVersion.latest}`}
+          </span>
+          {appVersion.updateAvailable && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setShowUpdate(true)}
+              className="h-6 border-warning/40 text-warning hover:bg-warning/10 text-xs px-2"
+            >
+              Update app
+            </Button>
+          )}
+        </div>
+      )}
+
       {/* yt-dlp status */}
       {ytdlp?.current && (
         <div className="hidden items-center gap-2 sm:flex shrink-0">
@@ -100,6 +131,8 @@ export function Header({ onAddVideos, onStats, onAccount, videoCount, search, on
           )}
         </div>
       )}
+
+      <AppUpdateModal open={showUpdate} onClose={() => setShowUpdate(false)} />
 
       <div className="ml-auto flex items-center gap-1">
         <Button size="default" onClick={onAddVideos} className="hidden sm:flex">

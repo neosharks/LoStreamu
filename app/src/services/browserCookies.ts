@@ -29,59 +29,56 @@ function toNetscape(cookies: Array<{
   return lines.join('\n') + '\n';
 }
 
-const COOKIE_MAX_AGE_MS = 30 * 60 * 1000;
-let _refreshing = false;
+// One Chromium launch at a time — reuse the pending promise if one is already running.
+let _pending: Promise<void> | null = null;
 
-function cookiesAge(): number {
-  try { return Date.now() - fs.statSync(COOKIES_PATH).mtimeMs; } catch { return Infinity; }
+export function fetchCookiesViaBrowser(url: string): Promise<void> {
+  if (_pending) return _pending;
+  _pending = _run(url).finally(() => { _pending = null; });
+  return _pending;
 }
 
-export async function refreshBrowserCookies(url: string): Promise<void> {
-  if (_refreshing || cookiesAge() < COOKIE_MAX_AGE_MS) return;
-  _refreshing = true;
+async function _run(url: string): Promise<void> {
+  const executablePath = findChromium();
+
+  const browser = await puppeteer.launch({
+    executablePath,
+    headless: true,
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-gpu',
+      '--no-first-run',
+      '--no-zygote',
+      '--single-process',
+    ],
+  });
+
   try {
-    const executablePath = findChromium();
-    const browser = await puppeteer.launch({
-      executablePath,
-      headless: true,
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-gpu',
-        '--no-first-run',
-        '--no-zygote',
-        '--single-process',
-      ],
+    const page = await browser.newPage();
+    await page.setUserAgent(
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+    );
+    await page.setExtraHTTPHeaders({
+      'Accept-Language': 'en-US,en;q=0.9',
+      Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
     });
 
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+
+    // Click age-gate if present
     try {
-      const page = await browser.newPage();
-      await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36');
-      await page.setExtraHTTPHeaders({
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-      });
-
-      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
-
-      // Click the age-gate confirmation button if present
-      try {
-        await page.waitForSelector('.buttonOver18', { timeout: 5000 });
-        await page.click('.buttonOver18');
-        await new Promise(r => setTimeout(r, 1500));
-      } catch {
-        // No age gate visible — already accepted or not shown
-      }
-
-      const cookies = await page.cookies();
-      fs.writeFileSync(COOKIES_PATH, toNetscape(cookies));
-    } finally {
-      await browser.close();
+      await page.waitForSelector('.buttonOver18', { timeout: 5000 });
+      await page.click('.buttonOver18');
+      await new Promise(r => setTimeout(r, 1500));
+    } catch {
+      // No age gate — site loaded normally
     }
-  } catch (err: any) {
-    console.warn('browserCookies: failed to refresh:', err?.message?.split('\n')[0]);
+
+    const cookies = await page.cookies();
+    fs.writeFileSync(COOKIES_PATH, toNetscape(cookies));
   } finally {
-    _refreshing = false;
+    await browser.close();
   }
 }

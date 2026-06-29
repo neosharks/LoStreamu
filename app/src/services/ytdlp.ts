@@ -3,7 +3,7 @@ import { promisify } from 'util';
 import fs from 'fs';
 import path from 'path';
 import { getProxy, COOKIES_PATH, YT_DLP_LOCAL } from '../config';
-import { refreshBrowserCookies } from './browserCookies';
+import { fetchCookiesViaBrowser } from './browserCookies';
 import type { PlaylistProbeResult, PlaylistEntry, YtDlpVersionInfo } from '../types';
 
 const execFileP = promisify(execFile);
@@ -78,11 +78,30 @@ export function netHint(msg: string): string {
   return msg;
 }
 
+// Returns true if the error looks like an age-gate / bot-detection rejection.
+function isAgeGateError(err: unknown): boolean {
+  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
+  return /410|403 forbidden|age.?gate|age.?verif|not available|confirm your age/i.test(msg);
+}
+
+// Run fn; on age-gate error fetch cookies via browser and retry once.
+async function withAgeGateRetry<T>(url: string, fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (err) {
+    if (!isAgeGateError(err)) throw err;
+    console.log(`[ytdlp] age-gate detected for ${url} — launching browser to accept…`);
+    await fetchCookiesViaBrowser(url);
+    return await fn();
+  }
+}
+
 export async function fetchPlaylistEntries(url: string): Promise<PlaylistProbeResult> {
-  await refreshBrowserCookies(url);
-  const { stdout } = await execFileP(ytDlpBin(), [
+  const run = () => execFileP(ytDlpBin(), [
     '-J', '--flat-playlist', '--no-warnings', ...ytNetArgs(), normalizeUrl(url),
   ], { timeout: 60000, maxBuffer: 50 * 1024 * 1024 });
+
+  const { stdout } = await withAgeGateRetry(url, run);
 
   const j = JSON.parse(stdout);
   const rawEntries: any[] = j.entries || [];
@@ -102,10 +121,11 @@ export async function fetchPlaylistEntries(url: string): Promise<PlaylistProbeRe
 }
 
 export async function fetchMeta(url: string): Promise<{ title: string; uploader?: string; thumbUrl?: string }> {
-  await refreshBrowserCookies(url);
-  const { stdout } = await execFileP(ytDlpBin(), [
+  const run = () => execFileP(ytDlpBin(), [
     '-J', '--no-playlist', '--no-warnings', ...ytNetArgs(), normalizeUrl(url),
   ], { timeout: 30000, maxBuffer: 10 * 1024 * 1024 });
+
+  const { stdout } = await withAgeGateRetry(url, run);
 
   const j = JSON.parse(stdout);
   return {
