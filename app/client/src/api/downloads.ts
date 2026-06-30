@@ -4,8 +4,12 @@ import type { DownloadJob, BatchJob, PlaylistProbe } from '../types';
 export const downloadsApi = {
   list: () => api.get<DownloadJob[]>('/downloads').then(r => r.data),
 
-  start: (url: string, folder: string) =>
-    api.post<{ id: string }>('/download', { url, folder }).then(r => r.data),
+  start: (url: string, folder: string, filename?: string) =>
+    api.post<{ id: string }>('/download', { url, folder, ...(filename && { filename }) }).then(r => r.data),
+
+  pause: (id: string) => api.post(`/download/${id}/pause`).then(r => r.data),
+
+  resume: (id: string) => api.post(`/download/${id}/resume`).then(r => r.data),
 
   cancel: (id: string) => api.post(`/download/${id}/cancel`).then(r => r.data),
 

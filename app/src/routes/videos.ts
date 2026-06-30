@@ -6,9 +6,9 @@ import { execSync } from 'child_process';
 import { z } from 'zod';
 import { requireAuth } from '../middleware/auth';
 import {
-  getLibrary, buildTree, findById, rescan, safePath, pruneEmptyDirs, getMediaRoot,
+  getLibrary, buildTree, findById, rescan, safePath, pruneEmptyDirs, getMediaRoot, purgeMetaEntry,
 } from '../services/library';
-import { generateSprite } from '../services/media';
+import { generateSprite, thumbPath, spritePath, vttPath } from '../services/media';
 
 const router = Router();
 
@@ -85,6 +85,10 @@ router.delete('/videos', requireAuth, (req, res) => {
     const v = findById(id);
     if (!v) continue;
     try { fs.rmSync(v.absPath, { force: true }); pruneEmptyDirs(path.dirname(v.absPath)); } catch {}
+    for (const p of [thumbPath(id), spritePath(id), vttPath(id)]) {
+      try { fs.rmSync(p, { force: true }); } catch {}
+    }
+    purgeMetaEntry(id);
   }
   rescan();
   res.json({ ok: true });
@@ -135,9 +139,47 @@ router.delete('/folders', requireAuth, (req, res) => {
   const folder = String(req.body?.folder || '');
   const abs = safePath(folder);
   if (!abs || !fs.existsSync(abs)) { res.status(404).json({ error: 'Folder not found.' }); return; }
+  for (const v of getLibrary()) {
+    if (!v.absPath.startsWith(abs + path.sep) && v.absPath !== abs) continue;
+    for (const p of [thumbPath(v.id), spritePath(v.id), vttPath(v.id)]) {
+      try { fs.rmSync(p, { force: true }); } catch {}
+    }
+    purgeMetaEntry(v.id);
+  }
   fs.rmSync(abs, { recursive: true, force: true });
   rescan();
   res.json({ ok: true });
+});
+
+router.post('/folders/move', requireAuth, (req, res) => {
+  const folder = String(req.body?.folder || '');
+  const dest = String(req.body?.dest ?? '');
+  const abs = safePath(folder);
+  if (!abs || !fs.existsSync(abs)) { res.status(404).json({ error: 'Folder not found.' }); return; }
+  const destAbs = dest ? (safePath(dest) || getMediaRoot()) : getMediaRoot();
+  const newAbs = path.join(destAbs, path.basename(abs));
+  if (abs === newAbs) { res.json({ ok: true }); return; }
+  if (newAbs.startsWith(abs + path.sep)) { res.status(400).json({ error: 'Cannot move a folder into itself.' }); return; }
+  if (fs.existsSync(newAbs)) { res.status(409).json({ error: 'A folder with that name already exists there.' }); return; }
+  fs.mkdirSync(destAbs, { recursive: true });
+  fs.renameSync(abs, newAbs);
+  rescan();
+  res.json({ ok: true });
+});
+
+// Returns relative paths of folders that contain a yt-dlp download archive (.downloaded.txt)
+router.get('/folders/archives', requireAuth, (_req, res) => {
+  const root = getMediaRoot();
+  const result: string[] = [];
+  function scan(dir: string, rel: string) {
+    try {
+      const entries = fs.readdirSync(dir, { withFileTypes: true });
+      if (entries.some(e => e.isFile() && e.name === '.downloaded.txt')) result.push(rel);
+      for (const e of entries) if (e.isDirectory()) scan(path.join(dir, e.name), rel ? `${rel}/${e.name}` : e.name);
+    } catch {}
+  }
+  scan(root, '');
+  res.json(result);
 });
 
 // ── Rescan + Stats ────────────────────────────────────────────────────────────

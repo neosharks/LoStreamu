@@ -4,15 +4,16 @@ import {
   Link2, ListVideo, Upload, X, Play, Loader2,
   ChevronDown, ChevronUp, SkipForward, Pause, Square,
 } from 'lucide-react';
+
 import { toast } from 'sonner';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogBody } from './ui/dialog';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Progress } from './ui/progress';
-import { Badge } from './ui/badge';
 import { downloadsApi } from '@/api/downloads';
 import { videosApi } from '@/api/videos';
 import { useSSE } from '@/hooks/useSSE';
+import { useDownloadsStore } from '@/stores/downloadsStore';
 import { formatBytes } from '@/lib/utils';
 import type { DownloadJob, BatchJob, BatchItem, PlaylistEntry } from '@/types';
 
@@ -21,18 +22,32 @@ type Tab = 'url' | 'upload';
 interface AddVideosModalProps {
   open: boolean;
   onClose: () => void;
+  currentFolder?: string;
 }
 
 // ── Individual download card ──────────────────────────────────────────────────
 
-function DownloadItem({ job, onDismiss }: { job: DownloadJob; onDismiss: (id: string) => void }) {
-  const [live, setLive] = useState<DownloadJob>(job);
-  const active = ['starting', 'downloading', 'processing'].includes(live.status);
+function DownloadItem({ jobId, onDismiss }: { jobId: string; onDismiss: (id: string) => void }) {
+  const { jobs, updateJob } = useDownloadsStore();
+  const job = jobs.find(j => j.id === jobId);
 
-  useSSE<DownloadJob>(
-    active ? `/api/download/${job.id}/events` : null,
-    (_, data) => setLive(prev => ({ ...prev, ...data })),
+  // Subscribe for all non-terminal statuses — queued/paused also need position updates
+  useSSE<Partial<DownloadJob>>(
+    job && !['done', 'error'].includes(job.status) ? `/api/download/${job.id}/events` : null,
+    (_, data) => updateJob(jobId, data),
   );
+
+  if (!job) return null;
+
+  const isActive = ['starting', 'downloading', 'processing'].includes(job.status);
+  const isQueued = job.status === 'queued';
+  const isPaused = job.status === 'paused';
+  const isDone = job.status === 'done';
+  const isError = job.status === 'error';
+
+  const handlePause  = () => downloadsApi.pause(job.id).catch(() => {});
+  const handleResume = () => downloadsApi.resume(job.id).catch(() => {});
+  const handleCancel = () => downloadsApi.cancel(job.id).catch(() => {});
 
   return (
     <div className="rounded-xl border border-border bg-surface p-3">
@@ -43,27 +58,52 @@ function DownloadItem({ job, onDismiss }: { job: DownloadJob; onDismiss: (id: st
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-start justify-between gap-2">
-            <p className="truncate text-sm font-medium text-text-primary">{live.title}</p>
+            <p className="truncate text-sm font-medium text-text-primary">{job.title}</p>
             <div className="flex items-center gap-1 shrink-0">
-              <Badge variant={live.status === 'done' ? 'success' : live.status === 'error' ? 'danger' : 'default'} className="capitalize text-xs">
-                {live.status}
-              </Badge>
-              {(live.status === 'done' || live.status === 'error') && (
-                <button onClick={() => onDismiss(job.id)} className="text-text-muted hover:text-text-primary p-0.5">
+              {/* Queue position chip */}
+              {isQueued && job.queuePos !== undefined && (
+                <span className="rounded bg-elevated px-1.5 py-0.5 text-[10px] font-medium text-text-muted">
+                  {job.queuePos === 1 ? 'Next up' : `#${job.queuePos} queued`}
+                </span>
+              )}
+              {isPaused && (
+                <span className="rounded bg-elevated px-1.5 py-0.5 text-[10px] font-medium text-text-muted">
+                  Paused{job.queuePos ? ` · #${job.queuePos}` : ''}
+                </span>
+              )}
+              {/* Action buttons */}
+              {isActive && (
+                <button onClick={handlePause} title="Pause" className="rounded p-0.5 text-text-muted hover:text-text-primary hover:bg-elevated transition-colors">
+                  <Pause className="h-3 w-3" />
+                </button>
+              )}
+              {isPaused && (
+                <button onClick={handleResume} title="Resume" className="rounded p-0.5 text-text-muted hover:text-accent hover:bg-accent/10 transition-colors">
+                  <Play className="h-3 w-3" />
+                </button>
+              )}
+              {(isActive || isQueued || isPaused) && (
+                <button onClick={handleCancel} title="Cancel" className="rounded p-0.5 text-text-muted hover:text-danger hover:bg-danger/10 transition-colors">
+                  <X className="h-3 w-3" />
+                </button>
+              )}
+              {(isDone || isError) && (
+                <button onClick={() => onDismiss(job.id)} title="Dismiss" className="rounded p-0.5 text-text-muted hover:text-text-primary hover:bg-elevated transition-colors">
                   <X className="h-3 w-3" />
                 </button>
               )}
             </div>
           </div>
-          {active && <Progress value={live.progress} className="mt-1.5" />}
-          {active && (
+          {isActive && <Progress value={job.progress} className="mt-1.5" />}
+          {isActive && (
             <p className="mt-0.5 text-xs text-text-muted">
-              {live.progress.toFixed(0)}%
-              {live.speed && <> · {live.speed}</>}
-              {live.eta && <> · ETA {live.eta}</>}
+              {job.status === 'processing' ? 'Processing…' : `${job.progress.toFixed(0)}%`}
+              {job.speed && <> · {job.speed}</>}
+              {job.eta && <> · ETA {job.eta}</>}
             </p>
           )}
-          {live.error && <p className="mt-1 text-xs text-danger line-clamp-2">{live.error}</p>}
+          {isDone && <p className="mt-0.5 text-xs text-success">Complete</p>}
+          {isError && <p className="mt-0.5 text-xs text-danger line-clamp-2">{job.error || 'Failed'}</p>}
         </div>
       </div>
     </div>
@@ -144,15 +184,18 @@ function BatchItemRow({
 
 // ── Batch download card ───────────────────────────────────────────────────────
 
-function BatchCard({ job: initialJob, onDismiss }: { job: BatchJob; onDismiss: (id: string) => void }) {
-  const [job, setJob] = useState(initialJob);
+function BatchCard({ batchId, onDismiss }: { batchId: string; onDismiss: (id: string) => void }) {
+  const { batches, updateBatch } = useDownloadsStore();
+  const job = batches.find(b => b.id === batchId);
   const [expanded, setExpanded] = useState(true);
-  const active = job.status === 'running' || job.status === 'paused';
+  const active = job ? (job.status === 'running' || job.status === 'paused') : false;
 
   useSSE<BatchJob>(
-    active ? `/api/batch/${job.id}/events` : null,
-    (_, data) => setJob(prev => ({ ...prev, ...data })),
+    active && job ? `/api/batch/${job.id}/events` : null,
+    (_, data) => updateBatch(batchId, data),
   );
+
+  if (!job) return null;
 
   const overallPct = job.total > 0 ? Math.round((job.done / job.total) * 100) : 0;
   const activeCount = (job.items || []).filter(i => i.status === 'downloading').length;
@@ -165,12 +208,13 @@ function BatchCard({ job: initialJob, onDismiss }: { job: BatchJob; onDismiss: (
           <div className="flex items-center gap-2">
             <ListVideo className="h-3.5 w-3.5 shrink-0 text-accent" />
             <p className="truncate text-sm font-medium text-text-primary">{job.title}</p>
-            <Badge
-              variant={job.status === 'done' ? 'success' : job.status === 'error' ? 'danger' : 'default'}
-              className="shrink-0 text-xs capitalize"
-            >
+            <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium capitalize ${
+              job.status === 'done' ? 'bg-success/15 text-success' :
+              job.status === 'error' ? 'bg-danger/15 text-danger' :
+              'bg-elevated text-text-muted'
+            }`}>
               {job.paused ? 'paused' : job.status}
-            </Badge>
+            </span>
           </div>
           <div className="mt-1 flex items-center gap-3">
             <Progress value={overallPct} className="flex-1 h-1" />
@@ -233,17 +277,19 @@ function BatchCard({ job: initialJob, onDismiss }: { job: BatchJob; onDismiss: (
 
 // ── Main modal ────────────────────────────────────────────────────────────────
 
-export function AddVideosModal({ open, onClose }: AddVideosModalProps) {
+export function AddVideosModal({ open, onClose, currentFolder }: AddVideosModalProps) {
   const qc = useQueryClient();
   const [tab, setTab] = useState<Tab>('url');
   const [url, setUrl] = useState('');
-  const [folder, setFolder] = useState('');
+  const [folder, setFolder] = useState(currentFolder ?? '');
   const [concurrency, setConcurrency] = useState(2);
   const [isPlaylist, setIsPlaylist] = useState(false);
   const [probe, setProbe] = useState<{ title: string; entries: PlaylistEntry[] } | null>(null);
   const [selected, setSelected] = useState<Set<number>>(new Set());
-  const [jobs, setJobs] = useState<DownloadJob[]>([]);
-  const [batches, setBatches] = useState<BatchJob[]>([]);
+  const [filename, setFilename] = useState('');
+  const [createSubfolder, setCreateSubfolder] = useState(true);
+  const [subfolderName, setSubfolderName] = useState(() => randomFolderName());
+  const { jobs, batches, addJob, addBatch, removeJob, removeBatch } = useDownloadsStore();
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -251,23 +297,25 @@ export function AddVideosModal({ open, onClose }: AddVideosModalProps) {
   const { data: tree } = useQuery({ queryKey: ['tree'], queryFn: videosApi.tree });
   const allFolders = ['', ...getFolderPaths(tree)];
 
-  // Restore active batches when the modal opens.
+  const { data: archiveFolders = [] } = useQuery({
+    queryKey: ['folders-archives'],
+    queryFn: videosApi.archiveFolders,
+    enabled: isPlaylist,
+    staleTime: 30_000,
+  });
+
   useEffect(() => {
     if (!open) return;
-    downloadsApi.listBatches().then(list => {
-      setBatches(prev => {
-        const existing = new Set(prev.map(b => b.id));
-        const fresh = list.filter(b => !existing.has(b.id));
-        return [...prev, ...fresh];
-      });
-    }).catch(() => {});
-  }, [open]);
+    setFolder(currentFolder ?? '');
+    setSubfolderName(randomFolderName());
+  }, [open, currentFolder]);
 
   const probeMutation = useMutation({
     mutationFn: () => downloadsApi.probePlaylist(url),
     onSuccess: data => {
       setProbe(data);
       setSelected(new Set(data.entries.map(e => e.index)));
+      setSubfolderName(sanitizeName(data.title));
     },
     onError: (err: any) => toast.error(err.response?.data?.error || 'Failed to read playlist'),
   });
@@ -275,16 +323,22 @@ export function AddVideosModal({ open, onClose }: AddVideosModalProps) {
   const downloadMutation = useMutation({
     mutationFn: async () => {
       if (isPlaylist && probe) {
+        const destFolder = createSubfolder && subfolderName.trim()
+          ? (folder ? `${folder}/${subfolderName.trim()}` : subfolderName.trim())
+          : folder;
         const items = probe.entries
           .filter(e => selected.has(e.index))
           .map(e => ({ index: e.index, title: e.title, url: e.url, thumbnail: e.thumbnail }));
-        return downloadsApi.startBatch({ url, folder, title: probe.title, concurrency, items });
+        return downloadsApi.startBatch({ url, folder: destFolder, title: probe.title, concurrency, items });
       }
-      return downloadsApi.start(url, folder);
+      return downloadsApi.start(url, folder, filename.trim() || undefined);
     },
     onSuccess: (data: any) => {
       if ('id' in data) {
         if (isPlaylist && probe) {
+          const destFolder = createSubfolder && subfolderName.trim()
+            ? (folder ? `${folder}/${subfolderName.trim()}` : subfolderName.trim())
+            : folder;
           const items = probe.entries
             .filter(e => selected.has(e.index))
             .map(e => ({
@@ -292,17 +346,18 @@ export function AddVideosModal({ open, onClose }: AddVideosModalProps) {
               url: e.url, thumbnail: e.thumbnail,
               status: 'pending' as const, progress: 0,
             }));
-          setBatches(prev => [...prev, {
+          addBatch({
             id: data.id, title: probe.title, status: 'running',
             paused: false, done: 0, total: items.length, concurrency, items,
-          }]);
+          });
+          qc.invalidateQueries({ queryKey: ['tree'] });
         } else {
-          setJobs(prev => [...prev, {
-            id: data.id, url, title: 'Downloading…',
-            status: 'starting', progress: 0, folder, startedAt: Date.now(),
-          }]);
+          addJob({
+            id: data.id, url, title: 'Fetching info…',
+            status: 'queued', progress: 0, folder, startedAt: Date.now(),
+          });
         }
-        setUrl(''); setProbe(null);
+        setUrl(''); setProbe(null); setFilename('');
         qc.invalidateQueries({ queryKey: ['videos'] });
       }
     },
@@ -326,8 +381,6 @@ export function AddVideosModal({ open, onClose }: AddVideosModalProps) {
 
   const autoDetectPlaylist = (v: string) =>
     /[?&]list=|\/playlist|\/sets\/|\/album\/|\/model\/|\/pornstar\/|\/channels?\/|\/users?\/|@|c\/|channel\/|user\//i.test(v);
-
-  const activeCount = jobs.length + batches.length;
 
   return (
     <Dialog open={open} onOpenChange={o => !o && onClose()}>
@@ -399,7 +452,7 @@ export function AddVideosModal({ open, onClose }: AddVideosModalProps) {
                     <input
                       type="checkbox"
                       checked={isPlaylist}
-                      onChange={e => { setIsPlaylist(e.target.checked); setProbe(null); }}
+                      onChange={e => { setIsPlaylist(e.target.checked); setProbe(null); setFilename(''); }}
                       className="rounded accent-accent"
                     />
                     This is a playlist
@@ -424,6 +477,104 @@ export function AddVideosModal({ open, onClose }: AddVideosModalProps) {
                     </div>
                   )}
                 </div>
+
+                {/* Single video: custom filename */}
+                {!isPlaylist && (
+                  <Input
+                    value={filename}
+                    onChange={e => setFilename(e.target.value)}
+                    placeholder="Save as… (leave blank to use video title)"
+                    className="text-sm"
+                  />
+                )}
+
+                {/* Playlist destination options */}
+                {isPlaylist && (
+                  <div className="space-y-2.5 rounded-xl border border-border bg-surface p-3">
+                    {/* Create new subfolder */}
+                    <label className="flex items-center gap-2.5 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="playlist-dest"
+                        checked={createSubfolder}
+                        onChange={() => setCreateSubfolder(true)}
+                        className="accent-accent"
+                      />
+                      <span className="text-sm text-text-primary font-medium">New subfolder</span>
+                    </label>
+                    {createSubfolder && (
+                      <div className="ml-5 flex gap-2">
+                        <Input
+                          value={subfolderName}
+                          onChange={e => setSubfolderName(e.target.value)}
+                          placeholder="Subfolder name"
+                          className="flex-1 text-sm"
+                        />
+                        <button
+                          onClick={() => setSubfolderName(randomFolderName())}
+                          title="Generate random name"
+                          className="rounded-lg border border-border bg-elevated px-2.5 text-text-muted hover:text-text-primary hover:bg-border transition-colors text-xs shrink-0"
+                        >
+                          ↺
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Save into existing folder */}
+                    <label className="flex items-center gap-2.5 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="playlist-dest"
+                        checked={!createSubfolder}
+                        onChange={() => setCreateSubfolder(false)}
+                        className="accent-accent"
+                      />
+                      <span className="text-sm text-text-primary font-medium">Existing folder</span>
+                      <span className="text-xs text-text-muted">(skips already-downloaded videos)</span>
+                    </label>
+                    {!createSubfolder && (
+                      <div className="ml-5 space-y-2">
+                        {archiveFolders.length > 0 && (
+                          <div className="space-y-1">
+                            <p className="text-[11px] text-text-subtle uppercase tracking-wider font-medium">Previous playlists</p>
+                            <div className="flex flex-wrap gap-1.5">
+                              {archiveFolders.map(f => (
+                                <button
+                                  key={f}
+                                  onClick={() => setFolder(f)}
+                                  className={`rounded-lg px-2.5 py-1 text-xs font-medium transition-colors border ${
+                                    folder === f
+                                      ? 'bg-accent text-white border-accent'
+                                      : 'bg-elevated border-border text-text-secondary hover:border-accent/50 hover:text-text-primary'
+                                  }`}
+                                >
+                                  {f.split('/').pop()}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        <select
+                          value={folder}
+                          onChange={e => setFolder(e.target.value)}
+                          className="w-full rounded-lg border border-border bg-elevated px-3 py-1.5 text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-accent"
+                        >
+                          {allFolders.map(f => (
+                            <option key={f} value={f}>
+                              {f || '/ (root)'}
+                              {archiveFolders.includes(f) ? ' ✓' : ''}
+                            </option>
+                          ))}
+                        </select>
+                        {folder && archiveFolders.includes(folder) && (
+                          <p className="text-xs text-success flex items-center gap-1">
+                            <span>✓</span> Previously downloaded videos in this folder will be skipped automatically
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {probe && (
                   <div className="rounded-xl border border-border bg-surface overflow-hidden">
@@ -518,23 +669,23 @@ export function AddVideosModal({ open, onClose }: AddVideosModalProps) {
             )}
 
             {/* Active downloads */}
-            {activeCount > 0 && (
+            {(jobs.length > 0 || batches.length > 0) && (
               <div className="space-y-2">
                 <p className="text-xs font-semibold uppercase tracking-wider text-text-subtle">
-                  Downloads {activeCount > 0 && `· ${activeCount} active`}
+                  Downloads · {jobs.length + batches.length}
                 </p>
                 {jobs.map(j => (
                   <DownloadItem
                     key={j.id}
-                    job={j}
-                    onDismiss={id => { downloadsApi.dismiss(id); setJobs(prev => prev.filter(x => x.id !== id)); }}
+                    jobId={j.id}
+                    onDismiss={id => { downloadsApi.dismiss(id); removeJob(id); }}
                   />
                 ))}
                 {batches.map(b => (
                   <BatchCard
                     key={b.id}
-                    job={b}
-                    onDismiss={id => { downloadsApi.dismissBatch(id); setBatches(prev => prev.filter(x => x.id !== id)); }}
+                    batchId={b.id}
+                    onDismiss={id => { downloadsApi.dismissBatch(id); removeBatch(id); }}
                   />
                 ))}
               </div>
@@ -553,4 +704,17 @@ function getFolderPaths(tree: any, acc: string[] = []): string[] {
     getFolderPaths(child, acc);
   }
   return acc;
+}
+
+function sanitizeName(s: string): string {
+  return s.replace(/[<>:"|?*\\/]/g, '').trim().slice(0, 80);
+}
+
+const RAND_ADJ = ['amber', 'arctic', 'azure', 'cobalt', 'cosmic', 'cozy', 'crimson', 'crystal', 'dark', 'electric', 'emerald', 'epic', 'frozen', 'golden', 'indie', 'jade', 'midnight', 'neon', 'obsidian', 'pastel', 'prism', 'retro', 'rustic', 'shadow', 'silver', 'solar', 'velvet', 'violet', 'vivid', 'cyber'];
+const RAND_NOUN = ['archive', 'cache', 'capsule', 'catalog', 'channel', 'chest', 'collection', 'depot', 'gallery', 'haven', 'hub', 'library', 'locker', 'mixtape', 'reel', 'shelf', 'stash', 'studio', 'trove', 'vault', 'zone'];
+
+function randomFolderName(): string {
+  const adj = RAND_ADJ[Math.floor(Math.random() * RAND_ADJ.length)];
+  const noun = RAND_NOUN[Math.floor(Math.random() * RAND_NOUN.length)];
+  return `${adj}-${noun}`;
 }

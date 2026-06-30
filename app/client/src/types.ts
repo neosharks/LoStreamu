@@ -18,7 +18,7 @@ export interface FolderTree {
   children: FolderTree[];
 }
 
-export type DownloadStatus = 'starting' | 'downloading' | 'processing' | 'done' | 'error';
+export type DownloadStatus = 'queued' | 'starting' | 'downloading' | 'processing' | 'paused' | 'done' | 'error';
 export type BatchStatus = 'running' | 'paused' | 'done' | 'stopped' | 'error';
 export type BatchItemStatus = 'pending' | 'downloading' | 'done' | 'error' | 'skipped';
 
@@ -35,6 +35,7 @@ export interface DownloadJob {
   thumbUrl?: string;
   error?: string;
   startedAt: number;
+  queuePos?: number; // 0 = active, 1+ = position in queue; absent when done/error
 }
 
 export interface BatchItem {

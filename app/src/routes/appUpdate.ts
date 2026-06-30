@@ -28,7 +28,7 @@ function runStep(cmd: string, args: string[], cwd: string, res: Response): Promi
         if (line.trim()) sseLog(res, line.trim());
       }
     });
-    proc.on('close', code => code === 0 ? resolve() : reject(new Error(`${cmd} exited with code ${code}`)));
+    proc.on('close', (code: number | null) => code === 0 ? resolve() : reject(new Error(`${cmd} exited with code ${code}`)));
   });
 }
 
@@ -49,8 +49,6 @@ router.get('/app/update/stream', requireAuth, async (req, res) => {
   const tarPath = '/tmp/sv-update.tar.gz';
   const updateUrl = getConfig().updateUrl ||
     'https://raw.githubusercontent.com/thakursat/hosted-video-streamer/main/streamvault-app.tar.gz';
-
-  try { await runStep('apt-get', ['install', '-y', '--no-install-recommends', 'sudo'], '/', res); } catch {}
 
   try {
     log(`► Downloading latest release from GitHub...`);
@@ -111,10 +109,9 @@ router.get('/app/update/stream', requireAuth, async (req, res) => {
 
     sseLog(res, 'Update complete — restarting service in 2 seconds…', 'done');
 
-    // Restart after giving SSE time to flush
-    setTimeout(() => {
-      spawn('systemctl', ['restart', 'streamvault'], { detached: true, stdio: 'ignore' }).unref();
-    }, 2000);
+    // Exit non-zero so systemd's Restart=on-failure triggers a clean restart
+    // with the newly compiled code. The service user cannot call systemctl directly.
+    setTimeout(() => process.exit(1), 2000);
   } catch (err: any) {
     sseLog(res, `✗ ${err.message}`, 'error');
   } finally {

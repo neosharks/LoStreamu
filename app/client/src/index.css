@@ -26,7 +26,10 @@
   }
 }
 
-/* Plyr custom theme */
-.plyr--video .plyr__controls { background: linear-gradient(transparent, rgba(0,0,0,0.8)); }
-.plyr__control--overlaid { background: rgba(99,102,241,0.9) !important; }
-.plyr--full-ui input[type=range] { color: #6366f1; }
+/* Player seek flash animation */
+@keyframes fadeInOut {
+  0%   { opacity: 0; transform: scale(0.85); }
+  20%  { opacity: 1; transform: scale(1); }
+  70%  { opacity: 1; transform: scale(1); }
+  100% { opacity: 0; transform: scale(1.05); }
+}

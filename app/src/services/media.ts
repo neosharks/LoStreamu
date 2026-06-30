@@ -27,7 +27,7 @@ export async function generateThumb(id: string, absPath: string, durationSec: nu
   ensureThumbDir();
   const out = thumbPath(id);
   if (fs.existsSync(out)) return out;
-  const seek = Math.max(0, durationSec * 0.1).toFixed(2);
+  const seek = Math.max(1, durationSec * 0.2).toFixed(2);
   await execFileP('ffmpeg', [
     '-ss', seek, '-i', absPath,
     '-vframes', '1', '-vf', 'scale=480:-2',

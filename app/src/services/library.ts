@@ -3,7 +3,7 @@ import path from 'path';
 import crypto from 'crypto';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
-import { getConfig, VIDEO_EXTENSIONS } from '../config';
+import { getConfig, VIDEO_EXTENSIONS, APP_DIR } from '../config';
 import type { VideoItem, FolderTree } from '../types';
 
 const execFileP = promisify(execFile);
@@ -20,7 +20,7 @@ export function getMediaRoot(): string {
 }
 
 function metaCachePath(): string {
-  return path.join(path.dirname(getMediaRoot()), 'meta-cache.json');
+  return path.join(APP_DIR, 'meta-cache.json');
 }
 
 function loadMetaCache(): void {
@@ -143,6 +143,13 @@ export function buildTree(): FolderTree {
   const tree = getNode('');
   propagate(tree);
   return tree;
+}
+
+export function purgeMetaEntry(id: string): void {
+  if (metaCache[id]) {
+    delete metaCache[id];
+    saveMetaCache();
+  }
 }
 
 export function safePath(relPath: string): string | null {

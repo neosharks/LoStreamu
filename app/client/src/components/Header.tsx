@@ -28,22 +28,6 @@ export function Header({ onAddVideos, onStats, onAccount, videoCount, search, on
     retry: false,
   });
 
-  const { data: ytdlp } = useQuery({
-    queryKey: ['ytdlp-version'],
-    queryFn: settingsApi.ytdlpVersion,
-    staleTime: 10 * 60 * 1000,
-    retry: false,
-  });
-
-  const updateMutation = useMutation({
-    mutationFn: settingsApi.ytdlpUpdate,
-    onSuccess: (data) => {
-      toast.success(`yt-dlp updated to ${data.version}`);
-      qc.invalidateQueries({ queryKey: ['ytdlp-version'] });
-    },
-    onError: (err: any) => toast.error(err.response?.data?.error || 'Update failed'),
-  });
-
   const rescanMutation = useMutation({
     mutationFn: videosApi.rescan,
     onSuccess: (data) => {
@@ -105,28 +89,6 @@ export function Header({ onAddVideos, onStats, onAccount, videoCount, search, on
               className="h-6 border-warning/40 text-warning hover:bg-warning/10 text-xs px-2"
             >
               Update app
-            </Button>
-          )}
-        </div>
-      )}
-
-      {/* yt-dlp status */}
-      {ytdlp?.current && (
-        <div className="hidden items-center gap-2 sm:flex shrink-0">
-          <div className={cn('h-1.5 w-1.5 rounded-full', ytdlp.outdated ? 'bg-warning' : 'bg-success')} />
-          <span className={cn('text-xs', ytdlp.outdated ? 'text-warning' : 'text-text-muted')}>
-            yt-dlp {ytdlp.current}
-            {ytdlp.outdated && ` → ${ytdlp.latest}`}
-          </span>
-          {ytdlp.outdated && (
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => updateMutation.mutate()}
-              disabled={updateMutation.isPending}
-              className="h-6 border-warning/40 text-warning hover:bg-warning/10 text-xs px-2"
-            >
-              {updateMutation.isPending ? 'Updating…' : 'Update'}
             </Button>
           )}
         </div>

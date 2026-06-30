@@ -3,6 +3,11 @@ import puppeteer from 'puppeteer-core';
 import { COOKIES_PATH } from '../config';
 
 const CHROMIUM_PATHS = [
+  // macOS
+  '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+  '/Applications/Chromium.app/Contents/MacOS/Chromium',
+  '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser',
+  // Linux
   '/usr/bin/chromium',
   '/usr/bin/chromium-browser',
   '/usr/bin/google-chrome-stable',
@@ -13,7 +18,7 @@ function findChromium(): string {
   for (const p of CHROMIUM_PATHS) {
     try { fs.accessSync(p, fs.constants.X_OK); return p; } catch {}
   }
-  throw new Error('Chromium not found — install with: apt-get install -y chromium');
+  throw new Error('Chromium not found — on macOS install Chrome from https://google.com/chrome; on Linux: apt-get install -y chromium');
 }
 
 function toNetscape(cookies: Array<{

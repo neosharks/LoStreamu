@@ -21,7 +21,8 @@ export function useSSE<T>(
       es.addEventListener(name, (e) => handle(e as MessageEvent, name));
     });
 
-    es.onerror = () => { es.close(); };
+    // Don't close on error — browser retries automatically (native EventSource behaviour).
+    // The caller sets url=null when the job finishes, which triggers cleanup below.
 
     return () => es.close();
   }, [url]);

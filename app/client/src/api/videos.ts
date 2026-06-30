@@ -28,4 +28,10 @@ export const videosApi = {
 
   deleteFolder: (folder: string) =>
     api.delete('/folders', { data: { folder } }).then(r => r.data),
+
+  moveFolder: (folder: string, dest: string) =>
+    api.post('/folders/move', { folder, dest }).then(r => r.data),
+
+  archiveFolders: () =>
+    api.get<string[]>('/folders/archives').then(r => r.data),
 };

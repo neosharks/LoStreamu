@@ -10,6 +10,7 @@ import { ytDlpBin } from './services/ytdlp';
 import { generateThumb } from './services/media';
 import { MIME } from './config';
 import authRouter from './routes/auth';
+import usersRouter from './routes/users';
 import videosRouter from './routes/videos';
 import downloadsRouter from './routes/downloads';
 import batchRouter from './routes/batch';
@@ -77,6 +78,7 @@ app.get('/thumb/:id', requireAuth, async (req, res) => {
 // ── API routes ────────────────────────────────────────────────────────────────
 
 app.use('/api', authRouter);
+app.use('/api', usersRouter);
 app.use('/api', videosRouter);
 app.use('/api', downloadsRouter);
 app.use('/api', batchRouter);

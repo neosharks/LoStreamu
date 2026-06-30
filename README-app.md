@@ -11,6 +11,12 @@ For running StreamVault directly on any Debian/Ubuntu server or macOS without Pr
 - **yt-dlp** (video downloads)
   - macOS: `brew install yt-dlp`
   - Linux: `curl -fsSL https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp && chmod +x /usr/local/bin/yt-dlp`
+- **curl-cffi** (yt-dlp TLS impersonation — fixes many blocked-site errors)
+  - `pip3 install --break-system-packages curl-cffi`  *(Debian 12+)*
+  - `pip3 install curl-cffi`  *(older systems / macOS)*
+- **Chromium** (optional — headless browser for age-gated content)
+  - macOS: [Google Chrome](https://google.com/chrome) or `brew install --cask chromium`
+  - Debian/Ubuntu: `apt-get install chromium`
 
 ## Development (local)
 
@@ -41,7 +47,7 @@ bash install-lxc.sh
 ```
 
 The installer:
-1. Installs system packages (Node.js 20, ffmpeg, yt-dlp)
+1. Installs system packages (Node.js 20, ffmpeg, yt-dlp, Chromium, curl-cffi)
 2. Sets up a daily yt-dlp auto-update timer
 3. Runs `npm install` (full — TypeScript compiler needed for the build)
 4. Compiles the TypeScript server → `dist/`
@@ -65,6 +71,7 @@ Open **http://\<server-ip\>:8080** and create your account on the first visit.
 |---|---|
 | `/opt/streamvault/config.json` | Port, email, password hash, media dir, proxy |
 | `/opt/streamvault/secrets.json` | Session signing key (auto-generated, never commit) |
+| `/opt/streamvault/users.json` | Additional managed user accounts (admin-created) |
 | `/opt/streamvault/media/` | Videos, organised in subfolders |
 | `/opt/streamvault/thumbnails/` | Generated thumbnails, sprites, VTT seek files |
 | `/opt/streamvault/meta-cache.json` | Cached ffprobe metadata (duration, resolution) |
@@ -90,9 +97,13 @@ Set `proxy` to an `http://`, `https://`, or `socks5://` URL to route all yt-dlp 
 
 ```bash
 cd /opt/streamvault
-sudo -u streamvault npm run set-password you@example.com 'newpassword'
+node dist/cli/set-password.js you@example.com 'newpassword'
 systemctl restart streamvault
 ```
+
+## User management
+
+The first account created (via the signup page) is the **admin**. The admin can add and remove additional user accounts from **Account settings → Users**. All users share the same media library. Non-admin users can change their own passwords but cannot manage other accounts.
 
 ## Service management
 
@@ -114,7 +125,7 @@ Or bind-mount an existing host directory. Re-run `chown -R streamvault:streamvau
 
 ## Upgrading
 
-Re-run `install-lxc.sh` — it rebuilds the server and client, restarts the service if running, and leaves `config.json`, `secrets.json`, `media/`, and `thumbnails/` untouched.
+Re-run `install-lxc.sh` — it rebuilds the server and client, restarts the service if running, and leaves `config.json`, `secrets.json`, `users.json`, `media/`, and `thumbnails/` untouched.
 
 ```bash
 cd /opt/streamvault

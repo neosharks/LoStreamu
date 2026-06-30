@@ -17,7 +17,7 @@ export const settingsApi = {
 };
 
 export const authApi = {
-  me: () => api.get<{ email: string }>('/me').then(r => r.data),
+  me: () => api.get<{ email: string; isAdmin: boolean }>('/me').then(r => r.data),
   setupState: () => api.get<{ hasAccount: boolean }>('/setup-state').then(r => r.data),
   login: (email: string, password: string) =>
     api.post('/login', { email, password }).then(r => r.data),
@@ -26,4 +26,12 @@ export const authApi = {
   logout: () => api.post('/logout').then(r => r.data),
   changePassword: (currentPassword: string, email?: string, newPassword?: string) =>
     api.post('/change-password', { currentPassword, email, newPassword }).then(r => r.data),
+};
+
+export const usersApi = {
+  list: () => api.get<{ email: string }[]>('/users').then(r => r.data),
+  create: (email: string, password: string) =>
+    api.post('/users', { email, password }).then(r => r.data),
+  remove: (email: string) =>
+    api.delete(`/users/${encodeURIComponent(email)}`).then(r => r.data),
 };

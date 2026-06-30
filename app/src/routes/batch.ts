@@ -90,7 +90,8 @@ async function runBatch(b: BatchJob): Promise<void> {
       broadcastBatch(b);
 
       const isDirectUrl = !!item.url;
-      const outTpl = path.join(destAbs, '%(title).200B [%(id)s].%(ext)s');
+      const randomBase = crypto.randomBytes(8).toString('hex');
+      const outTpl = path.join(destAbs, randomBase + '.%(ext)s');
 
       const args = [
         '--newline', '--no-mtime', '--no-warnings', '--continue',

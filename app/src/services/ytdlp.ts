@@ -48,9 +48,11 @@ function decodeHtml(s: string): string {
 }
 
 export function netHint(msg: string): string {
+  if (/impersonate target.*not available|missing dependencies required to support/i.test(msg))
+    return msg + ' — yt-dlp is missing the curl-cffi dependency. Fix: pip3 install --break-system-packages curl-cffi';
   if (/HTTP Error 410|410.*Gone/i.test(msg))
     return msg + ' — Site rejected the request (410). Try updating yt-dlp via the navbar button.';
-  if (/sign.?in|log.?in required|age.?verif|members.?only|premium|private|not available|account required/i.test(msg))
+  if (/sign.?in|log.?in required|age.?verif|members.?only|premium|private|video.*not available|not available.*country|account required/i.test(msg))
     return msg + ' — Authentication required. Drop a cookies.txt (Netscape format) next to server.js and retry.';
   if (/reset by peer|errno 104|connection refused|timed out|network is unreachable|getaddrinfo|failed to resolve/i.test(msg))
     return msg + (getProxy()
@@ -62,7 +64,9 @@ export function netHint(msg: string): string {
 // Returns true if the error looks like an age-gate / bot-detection rejection.
 function isAgeGateError(err: unknown): boolean {
   const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
-  return /410|403 forbidden|age.?gate|age.?verif|not available|confirm your age/i.test(msg);
+  // Exclude yt-dlp dependency/feature errors — these are not age gates.
+  if (/impersonate target|missing dependencies required to support/i.test(msg)) return false;
+  return /410|403 forbidden|age.?gate|age.?verif|video.*not available|not available.*country|confirm your age/i.test(msg);
 }
 
 // Run fn; on age-gate error fetch cookies via browser and retry once.
