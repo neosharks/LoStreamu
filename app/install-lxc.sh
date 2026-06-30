@@ -274,6 +274,12 @@ step "Setting ownership $SVC_USER:$SVC_USER on $APP_DIR ..."
 chown -R "$SVC_USER:$SVC_USER" "$APP_DIR"
 ok "Ownership set"
 
+# Pre-create the npm log/cache directory so the streamvault user can write to it.
+# Without this, npm exits with code 243 (EACCES) when trying to write log files.
+mkdir -p /home/"$SVC_USER"/.npm/_logs
+chown -R "$SVC_USER:$SVC_USER" /home/"$SVC_USER"/.npm
+ok "npm log directory ready (/home/$SVC_USER/.npm)"
+
 # ── Step 11: systemd service ──────────────────────────────────────────────────
 
 step "Installing streamvault.service..."

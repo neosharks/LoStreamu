@@ -11,6 +11,8 @@ WorkingDirectory=/opt/streamvault
 ExecStart=/usr/bin/node /opt/streamvault/dist/index.js
 Restart=on-failure
 RestartSec=3
+Environment=HOME=/tmp
+Environment=npm_config_cache=/tmp/.npm-sv
 NoNewPrivileges=true
 ProtectSystem=full
 PrivateTmp=true
