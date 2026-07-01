@@ -12,7 +12,7 @@ import { useSSE } from '@/hooks/useSSE';
 import { PlaylistReviewModal } from '@/components/PlaylistReviewModal';
 import { Progress } from '@/components/ui/progress';
 import { cn } from '@/lib/utils';
-import type { DownloadJob, DownloadStatus, FolderTree } from '@/types';
+import type { DownloadJob, DownloadStatus } from '@/types';
 
 type Filter = 'all' | 'active' | 'queued' | 'done' | 'failed';
 
@@ -29,16 +29,11 @@ const STATE_META: Record<DownloadStatus, { label: string; cls: string }> = {
 };
 
 // Flatten the folder tree into indented <option>s for the destination picker.
-function flattenFolders(tree: FolderTree | undefined): { path: string; label: string }[] {
-  const out: { path: string; label: string }[] = [{ path: '', label: 'Library (root)' }];
-  const walk = (node: FolderTree, depth: number) => {
-    for (const child of node.children) {
-      out.push({ path: child.path, label: `${'  '.repeat(depth)}${child.name}` });
-      walk(child, depth + 1);
-    }
-  };
-  if (tree) walk(tree, 1);
-  return out;
+function folderOptionsFrom(paths: string[]): { path: string; label: string }[] {
+  return [
+    { path: '', label: 'Library (root)' },
+    ...paths.map(p => ({ path: p, label: p })),
+  ];
 }
 
 // ── One queue row (memoized so unchanged rows don't re-render on progress ticks) ──
@@ -123,8 +118,8 @@ export function Downloads() {
   const [newFolderOpen, setNewFolderOpen] = useState(false);
   const [newFolder, setNewFolder] = useState('');
 
-  const { data: tree } = useQuery({ queryKey: ['tree'], queryFn: videosApi.tree });
-  const folderOptions = useMemo(() => flattenFolders(tree), [tree]);
+  const { data: allFolders = [] } = useQuery({ queryKey: ['folders-all'], queryFn: videosApi.allFolders });
+  const folderOptions = useMemo(() => folderOptionsFrom(allFolders), [allFolders]);
 
   // One SSE connection observes the entire queue (efficient for large queues).
   useSSE<DownloadJob[]>('/api/downloads/events', (name, data) => {
@@ -144,7 +139,8 @@ export function Downloads() {
       const path = folder ? `${folder}/${newFolder.trim()}` : newFolder.trim();
       toast.success('Folder created');
       setNewFolder(''); setNewFolderOpen(false);
-      qc.invalidateQueries({ queryKey: ['tree'] }).then(() => setFolder(path));
+      qc.invalidateQueries({ queryKey: ['tree'] });
+      qc.invalidateQueries({ queryKey: ['folders-all'] }).then(() => setFolder(path));
     },
     onError: (e: any) => toast.error(e?.response?.data?.error || 'Could not create folder'),
   });

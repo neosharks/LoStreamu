@@ -7,6 +7,8 @@ export const videosApi = {
 
   tree: () => api.get<FolderTree>('/tree').then(r => r.data),
 
+  allFolders: () => api.get<string[]>('/folders/all').then(r => r.data),
+
   stats: () => api.get<ServerStats>('/stats').then(r => r.data),
 
   rescan: () => api.post('/rescan').then(r => r.data),

@@ -294,8 +294,9 @@ export function AddVideosModal({ open, onClose, currentFolder }: AddVideosModalP
   const fileRef = useRef<HTMLInputElement>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
-  const { data: tree } = useQuery({ queryKey: ['tree'], queryFn: videosApi.tree });
-  const allFolders = ['', ...getFolderPaths(tree)];
+  // All folders on disk (incl. empty) so you can download into any existing folder.
+  const { data: folderPaths = [] } = useQuery({ queryKey: ['folders-all'], queryFn: videosApi.allFolders });
+  const allFolders = ['', ...folderPaths];
 
   const { data: archiveFolders = [] } = useQuery({
     queryKey: ['folders-archives'],

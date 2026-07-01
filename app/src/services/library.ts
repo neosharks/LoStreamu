@@ -102,6 +102,26 @@ export function findById(id: string): VideoItem | undefined {
   return library.find(v => v.id === id);
 }
 
+// All folders on disk (including empty ones), as sorted relative paths. The
+// folder tree is derived from video locations and omits empty folders, so this
+// filesystem walk is what download destination pickers should use.
+export function listAllFolders(): string[] {
+  const root = getMediaRoot();
+  const out: string[] = [];
+  const walk = (dir: string, rel: string): void => {
+    let entries: fs.Dirent[];
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      if (!e.isDirectory()) continue;
+      const childRel = rel ? `${rel}/${e.name}` : e.name;
+      out.push(childRel);
+      walk(path.join(dir, e.name), childRel);
+    }
+  };
+  walk(root, '');
+  return out.sort();
+}
+
 export function buildTree(): FolderTree {
   const root = getMediaRoot();
   const nodeMap = new Map<string, FolderTree>();

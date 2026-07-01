@@ -6,7 +6,7 @@ import { execSync } from 'child_process';
 import { z } from 'zod';
 import { requireAuth } from '../middleware/auth';
 import {
-  getLibrary, buildTree, findById, rescan, safePath, pruneEmptyDirs, getMediaRoot, purgeMetaEntry,
+  getLibrary, buildTree, findById, rescan, safePath, pruneEmptyDirs, getMediaRoot, purgeMetaEntry, listAllFolders,
 } from '../services/library';
 import { thumbPath, spritePath, vttPath, invalidateThumb } from '../services/media';
 
@@ -31,6 +31,9 @@ router.get('/videos', requireAuth, (req, res) => {
 });
 
 router.get('/tree', requireAuth, (_req, res) => res.json(buildTree()));
+
+// All folders on disk (incl. empty) — for download destination pickers.
+router.get('/folders/all', requireAuth, (_req, res) => res.json(listAllFolders()));
 
 router.get('/videos/:id/info', requireAuth, (req, res) => {
   const v = findById(req.params["id"] as string);
