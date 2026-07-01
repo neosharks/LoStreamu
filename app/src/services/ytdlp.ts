@@ -187,5 +187,13 @@ export async function updateYtDlp(): Promise<void> {
 }
 
 export function spawnDownload(args: string[]) {
-  return spawn(ytDlpBin(), args, { stdio: ['ignore', 'pipe', 'pipe'] });
+  const bin = ytDlpBin();
+  // On Linux run the download at the lowest CPU priority so video streaming and
+  // the web app always win under contention (playback is the priority). yt-dlp's
+  // ffmpeg merge inherits the niceness. `nice` execs in place, so the returned
+  // process is still yt-dlp and SIGTERM/kill work as before.
+  if (process.platform === 'linux') {
+    return spawn('nice', ['-n', '19', bin, ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
+  }
+  return spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
 }

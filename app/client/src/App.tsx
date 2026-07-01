@@ -35,6 +35,9 @@ export default function App() {
   return (
     <Routes>
       <Route path="/" element={<RequireAuth><Library /></RequireAuth>} />
+      {/* Player state lives in the URL so it survives refresh + shows the name. */}
+      <Route path="/watch/:id" element={<RequireAuth><Library /></RequireAuth>} />
+      <Route path="/watch/:id/:slug" element={<RequireAuth><Library /></RequireAuth>} />
       <Route path="/login" element={<Login />} />
       <Route path="/downloads" element={<RequireAuth><Downloads /></RequireAuth>} />
       <Route path="/settings" element={<RequireAuth><Settings /></RequireAuth>} />

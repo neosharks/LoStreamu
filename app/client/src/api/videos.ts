@@ -5,6 +5,8 @@ export const videosApi = {
   list: (folder = '', all = false) =>
     api.get<Video[]>('/videos', { params: { folder, ...(all && { all: '1' }) } }).then(r => r.data),
 
+  info: (id: string) => api.get<Video>(`/videos/${id}/info`).then(r => r.data),
+
   tree: () => api.get<FolderTree>('/tree').then(r => r.data),
 
   allFolders: () => api.get<string[]>('/folders/all').then(r => r.data),

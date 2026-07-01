@@ -33,6 +33,13 @@ export class DownloadQueue extends EventEmitter {
   private pumping = false;
   private pumpRequested = false;
 
+  // Progress emits are coalesced to a few per second so a downloading item's
+  // frequent progress lines don't flood SSE subscribers / churn the event loop
+  // while a video is streaming.
+  private lastEmit = 0;
+  private emitTimer: ReturnType<typeof setTimeout> | null = null;
+  private static readonly EMIT_INTERVAL_MS = 250;
+
   private readonly engine: DownloadEngine;
   private readonly persist: boolean;
   private readonly concurrency: number;
@@ -289,10 +296,24 @@ export class DownloadQueue extends EventEmitter {
   }
 
   // ── Emit / persist helpers ─────────────────────────────────────────────────
-  // touch: state changed but nothing structural — notify observers only.
-  private touch(): void { this.emit('change'); }
-  // commit: structural/state change — persist and notify.
+  // touch: progress-only change — notify observers, throttled to a few per second.
+  private touch(): void {
+    const now = Date.now();
+    if (now - this.lastEmit >= DownloadQueue.EMIT_INTERVAL_MS) {
+      this.lastEmit = now;
+      this.emit('change');
+    } else if (!this.emitTimer) {
+      this.emitTimer = setTimeout(() => {
+        this.emitTimer = null;
+        this.lastEmit = Date.now();
+        this.emit('change');
+      }, DownloadQueue.EMIT_INTERVAL_MS);
+    }
+  }
+  // commit: structural/state change — persist and notify immediately.
   private commit(): void {
+    if (this.emitTimer) { clearTimeout(this.emitTimer); this.emitTimer = null; }
+    this.lastEmit = Date.now();
     if (this.persist) saveQueue(this.order, this.list());
     this.emit('change');
   }

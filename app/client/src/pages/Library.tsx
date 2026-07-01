@@ -1,5 +1,5 @@
-import { useState, useMemo, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, useMemo, useEffect, useRef } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { Film, Search, Move, Trash2, X, Shuffle, FolderOpen, Plus, Download, Settings } from 'lucide-react';
@@ -28,11 +28,18 @@ function pseudoHash(id: string, seed: number): number {
   return h;
 }
 
+// Readable URL slug from a video name, e.g. "My Clip #2" -> "my-clip-2".
+function slugify(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'video';
+}
+
 export function Library() {
   const navigate = useNavigate();
   const qc = useQueryClient();
-  const { video: nowPlaying, open: openPlayer } = usePlayerStore();
+  const { id: watchId } = useParams();
+  const { video: nowPlaying, open: openPlayer, close: closePlayer } = usePlayerStore();
   const { hydrate, jobs, batches } = useDownloadsStore();
+  const prevPlayingId = useRef<string | null>(null);
 
   useEffect(() => {
     Promise.all([downloadsApi.list(), downloadsApi.listBatches()])
@@ -141,6 +148,33 @@ export function Library() {
     });
 
   const handlePlay = (video: Video) => openPlayer(video, filtered);
+
+  // ── Player ↔ URL sync ──────────────────────────────────────────────────────
+  // URL → store: open the player from /watch/:id on load, refresh, or back/forward.
+  useEffect(() => {
+    if (!watchId) { if (nowPlaying) closePlayer(); return; }
+    if (nowPlaying?.id === watchId) return;
+    const found = videos.find(v => v.id === watchId);
+    if (found) { openPlayer(found, filtered); return; }
+    // Not in the current folder view — fetch it and build a playlist from its folder.
+    videosApi.info(watchId)
+      .then(v => videosApi.list(v.folder).catch(() => [] as Video[])
+        .then(siblings => openPlayer(v, siblings.length ? siblings : [v])))
+      .catch(() => navigate('/', { replace: true }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [watchId, videos]);
+
+  // store → URL: reflect the playing video in the address bar; go back when closed.
+  useEffect(() => {
+    if (nowPlaying) {
+      prevPlayingId.current = nowPlaying.id;
+      if (watchId !== nowPlaying.id) navigate(`/watch/${nowPlaying.id}/${slugify(nowPlaying.name)}`);
+    } else if (prevPlayingId.current) {
+      prevPlayingId.current = null;
+      if (watchId) navigate('/');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nowPlaying?.id]);
 
   const folderDisplayName = (path: string) => path.split('/').pop() || 'root';
 
