@@ -9,6 +9,15 @@ SRC="app"
 
 [ -d "$SRC" ] || { echo "Missing ./$SRC directory"; exit 1; }
 
+# Bump the patch version on every build so each deploy ships a new version.
+# The in-app "update available" check (GET /app/version) compares this against
+# the copy on GitHub main. Override the bump with NO_BUMP=1 ./build-archive.sh.
+if [ "${NO_BUMP:-0}" != "1" ]; then
+  ( cd "$SRC" && npm version patch --no-git-tag-version >/dev/null )
+fi
+VERSION=$(node -p "require('./$SRC/package.json').version")
+echo "Version: $VERSION"
+
 tar -czf "$OUT" \
   --exclude='./node_modules' \
   --exclude='./dist' \
