@@ -10,7 +10,6 @@ import { usePlayerStore } from '@/stores/playerStore';
 import { videosApi } from '@/api/videos';
 import { formatDuration, cn } from '@/lib/utils';
 
-const RESUME_KEY = (id: string) => `sv:pos:${id}`;
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2];
 const SEEK_STEP = 10;
 const CONTROLS_TIMEOUT = 3000;
@@ -134,12 +133,11 @@ export function Player() {
     const v = videoRef.current;
     if (!v || !video) return;
 
-    const saved = parseFloat(localStorage.getItem(RESUME_KEY(video.id)) ?? '0');
-
     const onMeta = () => {
       setDuration(v.duration);
       videoIsLandscapeRef.current = v.videoWidth >= v.videoHeight;
-      if (saved > 5 && saved < v.duration - 3) v.currentTime = saved;
+      // Always start from the beginning (no resume-from-last-position).
+      v.currentTime = 0;
     };
     const onTime = () => {
       setCurrentTime(v.currentTime);
@@ -150,7 +148,6 @@ export function Player() {
     const onVol = () => { setVolumeState(v.volume); setMuted(v.muted); };
     const onRate = () => setSpeed(v.playbackRate);
     const onEnded = () => {
-      localStorage.removeItem(RESUME_KEY(video.id));
       setPaused(true);
       setControlsVisible(true);
       if (hasNext) setTimeout(next, 800);
@@ -186,17 +183,6 @@ export function Player() {
       v.removeEventListener('canplay', onPlaying);
     };
   }, [video?.id, hasNext, next, revealControls]);
-
-  // ── Save position ─────────────────────────────────────────────────────────────
-  useEffect(() => {
-    if (!video) return;
-    const id = setInterval(() => {
-      const v = videoRef.current;
-      if (v && !v.paused && v.currentTime > 5)
-        localStorage.setItem(RESUME_KEY(video.id), String(v.currentTime));
-    }, 3000);
-    return () => clearInterval(id);
-  }, [video?.id]);
 
   // ── Actions ───────────────────────────────────────────────────────────────────
   const togglePlay = useCallback(() => {
