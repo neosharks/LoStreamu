@@ -5,7 +5,15 @@
 @layer base {
   * { box-sizing: border-box; }
   html { scroll-behavior: smooth; }
-  body { margin: 0; font-family: 'Inter', system-ui, sans-serif; }
+  body {
+    margin: 0;
+    font-family: 'Inter', system-ui, sans-serif;
+    /* Kill the grey tap-flash on iOS/Android and stop text-select on double-tap. */
+    -webkit-tap-highlight-color: transparent;
+    -webkit-touch-callout: none;
+  }
+  /* Buttons/links/controls: no 300ms double-tap-zoom delay on touch. */
+  button, a, [role='button'], select, label { touch-action: manipulation; }
   ::-webkit-scrollbar { width: 6px; height: 6px; }
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb { background: #2a3147; border-radius: 3px; }

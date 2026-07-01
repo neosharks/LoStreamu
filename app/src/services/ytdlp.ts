@@ -39,6 +39,14 @@ export function ytNetArgs(): string[] {
   return args;
 }
 
+// Speed flags for actual media downloads (NOT metadata probes).
+// - concurrent-fragments: parallelise DASH/HLS chunk fetches (the #1 throughput win)
+// - http-chunk-size: chunked HTTP sidesteps YouTube's single-connection throttling
+// Both are network-bound — negligible CPU, so they don't undo the CPU work above.
+export function ytSpeedArgs(): string[] {
+  return ['--concurrent-fragments', '4', '--http-chunk-size', '10M'];
+}
+
 function decodeHtml(s: string): string {
   return String(s || '')
     .replace(/&#(\d+);/g, (_, n: string) => String.fromCharCode(Number(n)))

@@ -1,12 +1,9 @@
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
-import { execFile } from 'child_process';
-import { promisify } from 'util';
 import { getConfig, VIDEO_EXTENSIONS, APP_DIR } from '../config';
+import { runMedia } from './exec';
 import type { VideoItem, FolderTree } from '../types';
-
-const execFileP = promisify(execFile);
 
 let library: VideoItem[] = [];
 let metaCache: Record<string, Partial<VideoItem>> = {};
@@ -80,7 +77,7 @@ export async function buildMeta(): Promise<void> {
   const items = library.filter(v => !v.duration);
   for (const item of items) {
     try {
-      const { stdout } = await execFileP('ffprobe', [
+      const { stdout } = await runMedia('ffprobe', [
         '-v', 'quiet', '-print_format', 'json', '-show_streams', '-show_format',
         item.absPath,
       ], { timeout: 15000 });

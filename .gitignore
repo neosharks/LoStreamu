@@ -16,5 +16,6 @@ app/thumbnails/*.vtt
 !app/thumbnails/.gitkeep
 
 app/client/*.tsbuildinfo
+app/*.tsbuildinfo
 
 # NOTE: streamvault-app.tar.gz IS committed on purpose (the installer pulls it).

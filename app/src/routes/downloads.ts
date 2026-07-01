@@ -5,7 +5,7 @@ import crypto from 'crypto';
 import type { Response } from 'express';
 import { requireAuth } from '../middleware/auth';
 import { rescan, safePath, getMediaRoot, buildMeta } from '../services/library';
-import { ytNetArgs, spawnDownload, fetchMeta, netHint, normalizeUrl } from '../services/ytdlp';
+import { ytNetArgs, ytSpeedArgs, spawnDownload, fetchMeta, netHint, normalizeUrl } from '../services/ytdlp';
 import { fetchCookiesViaBrowser } from '../services/browserCookies';
 import type { DownloadJob } from '../types';
 
@@ -105,6 +105,7 @@ function startJob(job: InternalJob): void {
       '--newline', '--no-mtime', '--no-warnings', '--continue',
       '--download-archive', archivePath,
       ...ytNetArgs(),
+      ...ytSpeedArgs(),
       '--no-playlist',
       '-f', 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best',
       '--merge-output-format', 'mp4',

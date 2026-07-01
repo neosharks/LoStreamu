@@ -33,9 +33,6 @@ export function VideoCard({ video, onPlay, onRename, onDelete, onMove, selected,
   const intervalRef  = useRef<ReturnType<typeof setInterval> | null>(null);
   const isPlayRef    = useRef(false);
   const spriteOkRef  = useRef(false);
-  // kept in sync with latest callbacks so IntersectionObserver closure is stable
-  const startRef     = useRef<() => void>(() => {});
-  const stopRef      = useRef<() => void>(() => {});
 
   const spriteUrl = `/api/videos/${video.id}/sprite.jpg`;
 
@@ -89,26 +86,8 @@ export function VideoCard({ video, onPlay, onRename, onDelete, onMove, selected,
     setFrameIdx(0);
   }, []);
 
-  // Keep refs current so the IntersectionObserver closure is always up-to-date
-  startRef.current = startAnimation;
-  stopRef.current  = stopAnimation;
-
   // Cleanup on unmount
   useEffect(() => () => { if (intervalRef.current) clearInterval(intervalRef.current); }, []);
-
-  // Mobile: auto-play when card is centered in the viewport
-  useEffect(() => {
-    const el = cardRef.current;
-    if (!el) return;
-    const isTouch = window.matchMedia('(hover: none) and (pointer: coarse)').matches;
-    if (!isTouch) return;
-    const obs = new IntersectionObserver(
-      ([entry]) => { entry.isIntersecting ? startRef.current() : stopRef.current(); },
-      { rootMargin: '-25% 0px -25% 0px', threshold: 0.5 },
-    );
-    obs.observe(el);
-    return () => obs.disconnect();
-  }, []);
 
   const trackHover = (e: React.MouseEvent<HTMLDivElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();

@@ -105,8 +105,10 @@ app.listen(PORT, () => {
   console.log(`StreamVault running on http://0.0.0.0:${PORT}`);
   console.log(`Media dir: ${config.mediaDir}`);
   rescan();
-  buildMeta().catch(() => {});
-  scheduleYtDlpUpdate();
+  // Defer CPU work so the server can answer requests immediately on boot instead
+  // of racing ffprobe / yt-dlp against the first library load.
+  setTimeout(() => buildMeta().catch(() => {}), 4000);
+  setTimeout(scheduleYtDlpUpdate, 15000);
 });
 
 function scheduleYtDlpUpdate(): void {

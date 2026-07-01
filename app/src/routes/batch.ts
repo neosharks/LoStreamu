@@ -5,14 +5,15 @@ import crypto from 'crypto';
 import type { Response } from 'express';
 import { requireAuth } from '../middleware/auth';
 import { rescan, safePath, getMediaRoot, buildMeta } from '../services/library';
-import { ytNetArgs, spawnDownload, fetchPlaylistEntries, netHint, normalizeUrl } from '../services/ytdlp';
+import { ytNetArgs, ytSpeedArgs, spawnDownload, fetchPlaylistEntries, netHint, normalizeUrl } from '../services/ytdlp';
 import type { BatchJob, BatchItem } from '../types';
 
 const router = Router();
 const batches = new Map<string, BatchJob>();
 
-const DEFAULT_CONCURRENCY = 2;
-const MAX_CONCURRENCY = 3;
+// One download at a time — keeps CPU/network load minimal on small hosts.
+const DEFAULT_CONCURRENCY = 1;
+const MAX_CONCURRENCY = 1;
 // Stagger download starts to avoid triggering rate limits.
 const STAGGER_MIN_MS = 2000;
 const STAGGER_MAX_MS = 5000;
@@ -98,6 +99,7 @@ async function runBatch(b: BatchJob): Promise<void> {
         '--ignore-errors',
         '--download-archive', b.archive,
         ...ytNetArgs(),
+        ...ytSpeedArgs(),
         isDirectUrl ? '--no-playlist' : '--yes-playlist',
         ...(isDirectUrl ? [] : ['--playlist-items', String(item.index)]),
         '-f', 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best',

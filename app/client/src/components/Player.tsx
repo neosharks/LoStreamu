@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Play, Pause, SkipBack, SkipForward, ChevronLeft,
   Volume2, Volume1, VolumeX, Maximize, Minimize,
-  PictureInPicture2, Gauge,
+  PictureInPicture2, Gauge, Loader2,
 } from 'lucide-react';
 import { usePlayerStore } from '@/stores/playerStore';
 import { formatDuration, cn } from '@/lib/utils';
@@ -25,6 +25,12 @@ export function Player() {
   const hideTimer = useRef<ReturnType<typeof setTimeout>>();
   const seekingRef = useRef(false);
   const videoIsLandscapeRef = useRef(true); // tracks whether the video file itself is wider than tall
+  // Touch devices route all tap-to-play/seek through the gesture handlers below,
+  // so the <video> click handler must stay inert (avoids double-firing on tap).
+  const isTouchRef = useRef(
+    typeof window !== 'undefined' &&
+    window.matchMedia('(hover: none) and (pointer: coarse)').matches,
+  );
 
   // Playback state
   const [paused, setPaused] = useState(true);
@@ -43,6 +49,7 @@ export function Player() {
   const [seekHoverX, setSeekHoverX] = useState<number | null>(null);
   const [spriteLoaded, setSpriteLoaded] = useState(false);
   const [flash, setFlash] = useState<{ delta: number; key: number } | null>(null);
+  const [buffering, setBuffering] = useState(false);
 
   const idx = video && playlist.length ? playlist.findIndex(v => v.id === video.id) : -1;
   const hasPrev = idx > 0;
@@ -155,6 +162,9 @@ export function Player() {
       setControlsVisible(true);
       if (hasNext) setTimeout(next, 800);
     };
+    // Buffering spinner — crucial on flaky mobile networks.
+    const onWaiting = () => setBuffering(true);
+    const onPlaying = () => setBuffering(false);
 
     v.addEventListener('loadedmetadata', onMeta);
     v.addEventListener('timeupdate', onTime);
@@ -163,6 +173,11 @@ export function Player() {
     v.addEventListener('volumechange', onVol);
     v.addEventListener('ratechange', onRate);
     v.addEventListener('ended', onEnded);
+    v.addEventListener('waiting', onWaiting);
+    v.addEventListener('stalled', onWaiting);
+    v.addEventListener('loadstart', onWaiting);
+    v.addEventListener('playing', onPlaying);
+    v.addEventListener('canplay', onPlaying);
     return () => {
       v.removeEventListener('loadedmetadata', onMeta);
       v.removeEventListener('timeupdate', onTime);
@@ -171,6 +186,11 @@ export function Player() {
       v.removeEventListener('volumechange', onVol);
       v.removeEventListener('ratechange', onRate);
       v.removeEventListener('ended', onEnded);
+      v.removeEventListener('waiting', onWaiting);
+      v.removeEventListener('stalled', onWaiting);
+      v.removeEventListener('loadstart', onWaiting);
+      v.removeEventListener('playing', onPlaying);
+      v.removeEventListener('canplay', onPlaying);
     };
   }, [video?.id, hasNext, next, revealControls]);
 
@@ -269,9 +289,11 @@ export function Player() {
       if (!seekBarRef.current) return;
       const touch = e.touches[0];
       const r = seekBarRef.current.getBoundingClientRect();
-      seekTo(Math.max(0, Math.min(1, (touch.clientX - r.left) / r.width)));
+      const frac = Math.max(0, Math.min(1, (touch.clientX - r.left) / r.width));
+      seekTo(frac);
+      setSeekHoverX(frac); // drives the scrub-preview thumbnail on touch
     };
-    const onTouchEnd = () => { setSeeking(false); seekingRef.current = false; };
+    const onTouchEnd = () => { setSeeking(false); seekingRef.current = false; setSeekHoverX(null); };
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
     document.addEventListener('touchmove', onTouchMove, { passive: true });
@@ -292,7 +314,9 @@ export function Player() {
     if (seekBarRef.current) {
       const touch = e.touches[0];
       const r = seekBarRef.current.getBoundingClientRect();
-      seekTo(Math.max(0, Math.min(1, (touch.clientX - r.left) / r.width)));
+      const frac = Math.max(0, Math.min(1, (touch.clientX - r.left) / r.width));
+      seekTo(frac);
+      setSeekHoverX(frac);
     }
   }, [seekTo]);
 
@@ -383,10 +407,11 @@ export function Player() {
       const now = Date.now();
 
       if (lastTap.current && now - lastTap.current.time < 300 && lastTap.current.side === side) {
-        // Double tap
+        // Double tap: seek on the sides only. Center is intentionally inert —
+        // on mobile, playback toggles ONLY via the on-screen control buttons,
+        // never by tapping the video area.
         if (side === 'left') seekBy(-SEEK_STEP);
         else if (side === 'right') seekBy(SEEK_STEP);
-        else togglePlay();
         lastTap.current = null;
       } else {
         lastTap.current = { side, time: now };
@@ -400,7 +425,7 @@ export function Player() {
   return (
     <div
       ref={containerRef}
-      className="fixed inset-0 z-50 flex flex-col bg-black select-none"
+      className="fixed inset-0 z-50 flex flex-col bg-black select-none touch-none"
       onMouseMove={revealControls}
       onTouchStart={onTouchStart}
       onTouchEnd={onTouchEnd}
@@ -413,8 +438,17 @@ export function Player() {
         className={cn('absolute inset-0 h-full w-full object-contain', !controlsVisible && 'cursor-none')}
         autoPlay
         playsInline
-        onClick={togglePlay}
+        // Touch taps are handled by the container gesture logic; only wire the
+        // click-to-toggle for pointer (mouse) devices to avoid double-firing.
+        onClick={() => { if (!isTouchRef.current) togglePlay(); }}
       />
+
+      {/* Buffering spinner */}
+      {buffering && (
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+          <Loader2 className="h-12 w-12 animate-spin text-white/90 drop-shadow-lg" />
+        </div>
+      )}
 
       {/* Center seek flash */}
       {flash && (
