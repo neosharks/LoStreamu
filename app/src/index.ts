@@ -7,7 +7,7 @@ import { execFile } from 'child_process';
 import { loadConfig, loadSecrets, APP_DIR, YT_DLP_LOCAL } from './config';
 import { rescan, buildMeta, findById } from './services/library';
 import { ytDlpBin } from './services/ytdlp';
-import { generateThumb } from './services/media';
+import { getThumbBuffer } from './services/media';
 import { MIME } from './config';
 import authRouter from './routes/auth';
 import usersRouter from './routes/users';
@@ -48,7 +48,12 @@ app.get('/stream/:id', requireAuth, (req, res) => {
   const stat = fs.statSync(video.absPath);
   const total = stat.size;
   const mime = MIME[video.ext] || 'video/mp4';
+  // Let the browser cache/revalidate the file so replays and back-seeks reuse
+  // already-downloaded bytes instead of re-streaming from disk.
+  const lastMod = stat.mtime.toUTCString();
   const range = req.headers.range;
+  // Larger read chunks = fewer syscalls when streaming big files.
+  const HWM = 1 << 20; // 1 MiB
   if (range) {
     const [s, e] = range.replace(/bytes=/, '').split('-');
     const start = parseInt(s, 10);
@@ -58,20 +63,38 @@ app.get('/stream/:id', requireAuth, (req, res) => {
       'Accept-Ranges': 'bytes',
       'Content-Length': end - start + 1,
       'Content-Type': mime,
+      'Cache-Control': 'private, max-age=86400',
+      'Last-Modified': lastMod,
     });
-    fs.createReadStream(video.absPath, { start, end }).pipe(res);
+    fs.createReadStream(video.absPath, { start, end, highWaterMark: HWM }).pipe(res);
   } else {
-    res.writeHead(200, { 'Content-Length': total, 'Content-Type': mime, 'Accept-Ranges': 'bytes' });
-    fs.createReadStream(video.absPath).pipe(res);
+    res.writeHead(200, {
+      'Content-Length': total,
+      'Content-Type': mime,
+      'Accept-Ranges': 'bytes',
+      'Cache-Control': 'private, max-age=86400',
+      'Last-Modified': lastMod,
+    });
+    fs.createReadStream(video.absPath, { highWaterMark: HWM }).pipe(res);
   }
 });
 
 app.get('/thumb/:id', requireAuth, async (req, res) => {
   const video = findById(req.params["id"] as string);
   if (!video) { res.status(404).json({ error: 'Not found' }); return; }
+  // Strong ETag keyed by id — thumbnails are immutable for a given video, so the
+  // browser can serve from its own cache and we answer repeats with 304.
+  const etag = `"t-${video.id}"`;
+  if (req.headers['if-none-match'] === etag) { res.status(304).end(); return; }
   try {
-    const p = await generateThumb(video.id, video.absPath, video.duration || 60);
-    res.sendFile(p);
+    const buf = await getThumbBuffer(video.id, video.absPath, video.duration || 60);
+    res.writeHead(200, {
+      'Content-Type': 'image/jpeg',
+      'Content-Length': buf.length,
+      'Cache-Control': 'public, max-age=604800',
+      'ETag': etag,
+    });
+    res.end(buf);
   } catch { res.status(500).json({ error: 'Thumbnail generation failed' }); }
 });
 

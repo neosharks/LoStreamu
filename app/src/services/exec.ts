@@ -1,5 +1,6 @@
 import { execFile } from 'child_process';
 import { promisify } from 'util';
+import os from 'os';
 
 const execFileP = promisify(execFile);
 
@@ -8,22 +9,42 @@ export interface RunOpts {
   maxBuffer?: number;
 }
 
-// CPU-heavy media tools (ffmpeg / ffprobe) run ONE AT A TIME, at low priority.
+// Concurrency cap for CPU-heavy media tools (ffmpeg / ffprobe).
 //
-// Without this, a single library load fans out into dozens of parallel ffmpeg
-// processes (one per thumbnail/sprite request) and every core pins to 100%,
-// making the host unusable. Serializing + `nice` keeps media generation to a
-// single low-priority core so playback and streaming stay responsive.
-let chain: Promise<unknown> = Promise.resolve();
+// Defaults to the CPU core count so a burst of thumbnail/sprite/probe work uses
+// EVERY core and finishes fast (important at 400+ videos), then idles. Each job
+// runs with `-threads 1` (set by the callers), so N jobs = N cores with no
+// oversubscription — this avoids both the old "1 core only" bottleneck and the
+// original unbounded fan-out that pinned the host. Override via
+// SV_MEDIA_CONCURRENCY (e.g. set to 2 on a tiny shared host).
+export const MEDIA_CONCURRENCY = Math.max(
+  1,
+  Number(process.env.SV_MEDIA_CONCURRENCY) || os.cpus().length,
+);
 
-export function runMedia(bin: string, args: string[], opts: RunOpts = {}) {
-  const exec = () =>
-    process.platform === 'linux'
-      // `nice` execs the target in-place (same PID), so a timeout still kills ffmpeg.
-      ? execFileP('nice', ['-n', '19', bin, ...args], opts)
-      : execFileP(bin, args, opts);
+let active = 0;
+const waiters: Array<() => void> = [];
 
-  const run = chain.then(exec, exec);
-  chain = run.then(() => {}, () => {}); // keep the queue alive past failures
-  return run;
+function acquire(): Promise<void> {
+  if (active < MEDIA_CONCURRENCY) { active++; return Promise.resolve(); }
+  return new Promise<void>(resolve => waiters.push(resolve));
+}
+
+function release(): void {
+  const next = waiters.shift();
+  if (next) next();   // hand the slot directly to the next waiter
+  else active--;
+}
+
+export async function runMedia(bin: string, args: string[], opts: RunOpts = {}) {
+  await acquire();
+  try {
+    // Keep media work at low priority on Linux so playback/streaming win under
+    // contention. `nice` execs in-place (same PID), so a timeout still kills it.
+    return process.platform === 'linux'
+      ? await execFileP('nice', ['-n', '19', bin, ...args], opts)
+      : await execFileP(bin, args, opts);
+  } finally {
+    release();
+  }
 }

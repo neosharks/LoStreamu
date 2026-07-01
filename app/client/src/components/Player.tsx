@@ -8,9 +8,6 @@ import { usePlayerStore } from '@/stores/playerStore';
 import { formatDuration, cn } from '@/lib/utils';
 
 const RESUME_KEY = (id: string) => `sv:pos:${id}`;
-const SPRITE_COLS = 5;
-const SPRITE_ROWS = 5;
-const SPRITE_TOTAL = SPRITE_COLS * SPRITE_ROWS;
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2];
 const SEEK_STEP = 10;
 const CONTROLS_TIMEOUT = 3000;
@@ -47,7 +44,6 @@ export function Player() {
   const [seeking, setSeeking] = useState(false);
   const [volDragging, setVolDragging] = useState(false);
   const [seekHoverX, setSeekHoverX] = useState<number | null>(null);
-  const [spriteLoaded, setSpriteLoaded] = useState(false);
   const [flash, setFlash] = useState<{ delta: number; key: number } | null>(null);
   const [buffering, setBuffering] = useState(false);
 
@@ -65,15 +61,6 @@ export function Player() {
       if (v && !v.paused && !seekingRef.current) setControlsVisible(false);
     }, CONTROLS_TIMEOUT);
   }, []);
-
-  // ── Sprite preload ────────────────────────────────────────────────────────────
-  useEffect(() => {
-    if (!video) return;
-    setSpriteLoaded(false);
-    const img = new Image();
-    img.onload = () => setSpriteLoaded(true);
-    img.src = `/api/videos/${video.id}/sprite.jpg`;
-  }, [video?.id]);
 
   // ── Body scroll lock ──────────────────────────────────────────────────────────
   useEffect(() => {
@@ -369,14 +356,8 @@ export function Player() {
     return () => document.removeEventListener('keydown', onKey);
   }, [togglePlay, seekBy, setVol, toggleMute, toggleFullscreen, togglePiP, close, hasNext, hasPrev, next, prev, seekTo]);
 
-  // ── Sprite hover math ─────────────────────────────────────────────────────────
-  const hoverFrame = seekHoverX !== null ? Math.min(SPRITE_TOTAL - 1, Math.floor(seekHoverX * SPRITE_TOTAL)) : 0;
-  const hoverCol = hoverFrame % SPRITE_COLS;
-  const hoverRow = Math.floor(hoverFrame / SPRITE_COLS);
-  const hoverBgX = (hoverCol / (SPRITE_COLS - 1)) * 100;
-  const hoverBgY = (hoverRow / (SPRITE_ROWS - 1)) * 100;
+  // Timestamp shown above the seek bar while hovering/scrubbing.
   const hoverTime = (seekHoverX ?? 0) * duration;
-  const spriteUrl = video ? `/api/videos/${video.id}/sprite.jpg` : '';
 
   const VolumeIcon = muted || volume === 0 ? VolumeX : volume < 0.5 ? Volume1 : Volume2;
 
@@ -448,6 +429,19 @@ export function Player() {
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
           <Loader2 className="h-12 w-12 animate-spin text-white/90 drop-shadow-lg" />
         </div>
+      )}
+
+      {/* Center play button — shown when paused (incl. blocked autoplay). This is
+          the ONLY way tapping the middle of the screen starts playback, which is
+          what keeps mobile taps from pausing mid-watch. */}
+      {paused && !buffering && (
+        <button
+          onClick={togglePlay}
+          className="absolute left-1/2 top-1/2 flex h-20 w-20 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-black/50 text-white backdrop-blur-sm transition-transform active:scale-90"
+          aria-label="Play"
+        >
+          <Play className="h-10 w-10 translate-x-0.5" fill="currentColor" />
+        </button>
       )}
 
       {/* Center seek flash */}
@@ -529,30 +523,16 @@ export function Player() {
 
         {/* Seek bar */}
         <div className="relative px-1">
-          {/* Sprite thumbnail tooltip */}
-          {seekHoverX !== null && spriteLoaded && (
+          {/* Timestamp tooltip while hovering / scrubbing */}
+          {seekHoverX !== null && (
             <div
-              className="absolute bottom-full mb-3 pointer-events-none"
+              className="absolute bottom-full mb-2 pointer-events-none rounded-lg bg-black/80 px-2 py-1 shadow-xl"
               style={{
-                left: `clamp(80px, ${seekHoverX * 100}%, calc(100% - 80px))`,
+                left: `clamp(32px, ${seekHoverX * 100}%, calc(100% - 32px))`,
                 transform: 'translateX(-50%)',
               }}
             >
-              <div
-                className="overflow-hidden rounded-xl border border-white/20 shadow-2xl"
-                style={{ width: 160, height: 90 }}
-              >
-                <div
-                  className="h-full w-full"
-                  style={{
-                    backgroundImage: `url(${spriteUrl})`,
-                    backgroundSize: `${SPRITE_COLS * 100}% ${SPRITE_ROWS * 100}%`,
-                    backgroundPosition: `${hoverBgX}% ${hoverBgY}%`,
-                    backgroundRepeat: 'no-repeat',
-                  }}
-                />
-              </div>
-              <p className="mt-1 text-center text-xs font-mono font-bold text-white tabular-nums drop-shadow-lg">
+              <p className="text-xs font-mono font-bold text-white tabular-nums">
                 {formatDuration(hoverTime)}
               </p>
             </div>

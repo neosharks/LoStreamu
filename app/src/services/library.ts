@@ -75,7 +75,10 @@ export function rescan(): void {
 
 export async function buildMeta(): Promise<void> {
   const items = library.filter(v => !v.duration);
-  for (const item of items) {
+  if (!items.length) return;
+  // Probe in parallel — runMedia bounds this to the core count, so 400 new
+  // videos get their duration/resolution across all cores instead of serially.
+  await Promise.all(items.map(async item => {
     try {
       const { stdout } = await runMedia('ffprobe', [
         '-v', 'quiet', '-print_format', 'json', '-show_streams', '-show_format',
@@ -91,8 +94,8 @@ export async function buildMeta(): Promise<void> {
       metaCache[item.id] = { ...metaCache[item.id], ...patch };
       Object.assign(item, patch);
     } catch {}
-  }
-  if (items.length) saveMetaCache();
+  }));
+  saveMetaCache();
 }
 
 export function findById(id: string): VideoItem | undefined {

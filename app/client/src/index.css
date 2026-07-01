@@ -32,6 +32,13 @@
     -webkit-text-fill-color: transparent;
     background-clip: text;
   }
+  /* Native windowing for large grids: off-screen cards skip layout/render/paint.
+     Keeps a 400+ video library smooth to scroll without a virtualization lib.
+     contain-intrinsic-size reserves each card's height so the scrollbar is stable. */
+  .cv-card {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 280px;
+  }
 }
 
 /* Safe-area helpers (iOS home bar / notch) */

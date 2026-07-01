@@ -9,10 +9,11 @@ export function thumbPath(id: string): string {
   return path.join(THUMB_DIR, `${id}.jpg`);
 }
 
+// Legacy sprite/vtt paths kept only so old cached files get cleaned up on
+// delete. Sprite scrub-previews were removed in favour of a single thumbnail.
 export function spritePath(id: string): string {
   return path.join(THUMB_DIR, `${id}.sprite.jpg`);
 }
-
 export function vttPath(id: string): string {
   return path.join(THUMB_DIR, `${id}.vtt`);
 }
@@ -21,57 +22,46 @@ function ensureThumbDir(): void {
   fs.mkdirSync(THUMB_DIR, { recursive: true });
 }
 
-export async function generateThumb(id: string, absPath: string, durationSec: number): Promise<string> {
-  ensureThumbDir();
-  const out = thumbPath(id);
-  if (fs.existsSync(out)) return out;
-  const seek = Math.max(1, durationSec * 0.2).toFixed(2);
-  await runMedia('ffmpeg', [
-    '-nostdin', '-threads', '1',
-    '-ss', seek, '-i', absPath,
-    '-frames:v', '1', '-an', '-vf', 'scale=480:-2',
-    '-q:v', '5', '-y', out,
-  ], { timeout: 20000 });
-  return out;
+// ── In-memory thumbnail cache ──────────────────────────────────────────────
+// Thumbnails are tiny (~10KB) and read on every grid render/scroll. Keeping the
+// hot set in RAM avoids disk I/O and lets the HTTP layer answer instantly.
+// Simple LRU: Map preserves insertion order, so re-inserting on hit = recency.
+const thumbCache = new Map<string, Buffer>();
+const THUMB_CACHE_MAX = Math.max(50, Number(process.env.SV_THUMB_CACHE_MAX) || 2000);
+
+export function invalidateThumb(id: string): void {
+  thumbCache.delete(id);
 }
 
-export async function generateSprite(
-  id: string,
-  absPath: string,
-  durationSec: number,
-): Promise<{ sprite: string; vtt: string }> {
-  ensureThumbDir();
-  const sprite = spritePath(id);
-  const vtt = vttPath(id);
-  if (fs.existsSync(sprite) && fs.existsSync(vtt)) return { sprite, vtt };
-
-  const COLS = 5, ROWS = 5, W = 160, H = 90;
-  const total = COLS * ROWS;
-  const interval = Math.max(1, durationSec / total);
-
-  // Single ffmpeg pass: sample one frame per interval, scale, and tile straight
-  // into a 5x5 JPEG. One decode, one process, one thread — no temp files and no
-  // second 25-input tile pass. Far lighter on CPU than extract-then-tile.
-  await runMedia('ffmpeg', [
-    '-nostdin', '-threads', '1',
-    '-i', absPath,
-    '-an', '-frames:v', '1',
-    '-vf', `fps=1/${interval.toFixed(2)},scale=${W}:${H},tile=${COLS}x${ROWS}`,
-    '-q:v', '5', '-y', sprite,
-  ], { timeout: 60000 });
-
-  const lines = ['WEBVTT', ''];
-  for (let i = 0; i < total; i++) {
-    const t = i * interval;
-    const col = i % COLS, row = Math.floor(i / COLS);
-    const fmt = (s: number) => {
-      const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), sec = s % 60;
-      return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${sec.toFixed(3).padStart(6, '0')}`;
-    };
-    lines.push(fmt(t) + ' --> ' + fmt(t + interval));
-    lines.push(`sprite.jpg#xywh=${col * W},${row * H},${W},${H}`, '');
+// Returns the JPEG bytes for a video's thumbnail, generating a single mid-video
+// frame on first request, then serving from RAM on subsequent requests.
+export async function getThumbBuffer(id: string, absPath: string, durationSec: number): Promise<Buffer> {
+  const hit = thumbCache.get(id);
+  if (hit) {
+    thumbCache.delete(id);
+    thumbCache.set(id, hit); // mark most-recently-used
+    return hit;
   }
-  fs.writeFileSync(vtt, lines.join('\n'));
 
-  return { sprite, vtt };
+  const out = thumbPath(id);
+  if (!fs.existsSync(out)) {
+    ensureThumbDir();
+    // One frame from the middle of the video — most representative, and a single
+    // fast keyframe seek is cheap even for long files.
+    const seek = Math.max(1, durationSec * 0.5).toFixed(2);
+    await runMedia('ffmpeg', [
+      '-nostdin', '-threads', '1',
+      '-ss', seek, '-i', absPath,
+      '-frames:v', '1', '-an', '-vf', 'scale=480:-2',
+      '-q:v', '5', '-y', out,
+    ], { timeout: 20000 });
+  }
+
+  const buf = fs.readFileSync(out);
+  thumbCache.set(id, buf);
+  if (thumbCache.size > THUMB_CACHE_MAX) {
+    const oldest = thumbCache.keys().next().value as string | undefined;
+    if (oldest !== undefined) thumbCache.delete(oldest);
+  }
+  return buf;
 }

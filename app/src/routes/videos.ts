@@ -8,7 +8,7 @@ import { requireAuth } from '../middleware/auth';
 import {
   getLibrary, buildTree, findById, rescan, safePath, pruneEmptyDirs, getMediaRoot, purgeMetaEntry,
 } from '../services/library';
-import { generateSprite, thumbPath, spritePath, vttPath } from '../services/media';
+import { thumbPath, spritePath, vttPath, invalidateThumb } from '../services/media';
 
 const router = Router();
 
@@ -36,25 +36,6 @@ router.get('/videos/:id/info', requireAuth, (req, res) => {
   const v = findById(req.params["id"] as string);
   if (!v) { res.status(404).json({ error: 'Not found' }); return; }
   res.json(v);
-});
-
-// Scrub-preview sprite + VTT
-router.get('/videos/:id/sprite.jpg', requireAuth, async (req, res) => {
-  const v = findById(req.params["id"] as string);
-  if (!v) { res.status(404).json({ error: 'Not found' }); return; }
-  try {
-    const { sprite } = await generateSprite(v.id, v.absPath, v.duration || 60);
-    res.sendFile(sprite);
-  } catch { res.status(500).json({ error: 'Sprite generation failed' }); }
-});
-
-router.get('/videos/:id/thumbs.vtt', requireAuth, async (req, res) => {
-  const v = findById(req.params["id"] as string);
-  if (!v) { res.status(404).json({ error: 'Not found' }); return; }
-  try {
-    const { vtt } = await generateSprite(v.id, v.absPath, v.duration || 60);
-    res.type('text/vtt').sendFile(vtt);
-  } catch { res.status(500).json({ error: 'VTT generation failed' }); }
 });
 
 // Download original file to browser
@@ -88,6 +69,7 @@ router.delete('/videos', requireAuth, (req, res) => {
     for (const p of [thumbPath(id), spritePath(id), vttPath(id)]) {
       try { fs.rmSync(p, { force: true }); } catch {}
     }
+    invalidateThumb(id);
     purgeMetaEntry(id);
   }
   rescan();
