@@ -36,6 +36,8 @@ export interface DownloadJob {
   error?: string;
   startedAt: number;
   queuePos?: number; // 0 = active, 1+ = position in queue; absent when done/error
+  groupId?: string;    // playlist grouping
+  groupTitle?: string;
 }
 
 export interface BatchItem {

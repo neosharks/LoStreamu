@@ -29,6 +29,8 @@ export interface EnqueueInput {
   folder: string;   // relative destination folder (for display)
   destAbs: string;   // absolute destination path, resolved & snapshotted at enqueue time
   filename?: string; // optional explicit output filename (no extension)
+  groupId?: string;    // playlist grouping — items sharing a groupId belong together
+  groupTitle?: string; // playlist title, for the group header
 }
 
 // A single unit of work. Carries enough metadata that a retry is just a re-run
@@ -40,6 +42,8 @@ export interface QueueItem {
   folder: string;
   destAbs: string;
   filename?: string;
+  groupId?: string;
+  groupTitle?: string;
   // ── metadata (filled during "preparing") ──
   title: string;
   uploader?: string;

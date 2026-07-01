@@ -194,9 +194,13 @@ router.post('/playlist/download', requireAuth, (req, res) => {
   const destAbs = folder ? (safePath(folder) || getMediaRoot()) : getMediaRoot();
   fs.mkdirSync(destAbs, { recursive: true });
 
+  // Tag every entry with a shared group so the UI can show the playlist as one
+  // section with its own controls.
+  const groupId = crypto.randomBytes(6).toString('hex');
+  const groupTitle = String(req.body?.title || 'Playlist');
   const inputs = rawItems
     .filter(i => i.url)
-    .map(i => ({ url: String(i.url), folder, destAbs }));
+    .map(i => ({ url: String(i.url), folder, destAbs, groupId, groupTitle }));
   if (!inputs.length) { res.status(400).json({ error: 'No downloadable items in playlist' }); return; }
 
   const { added, duplicates } = downloadQueue.enqueueMany(inputs);

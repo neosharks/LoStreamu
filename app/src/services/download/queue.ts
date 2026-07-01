@@ -32,6 +32,7 @@ export class DownloadQueue extends EventEmitter {
   // captures wake-ups that arrive while the loop is mid-await (no lost wake-ups).
   private pumping = false;
   private pumpRequested = false;
+  private suppressPump = false;   // hold the processor while a bulk op applies
 
   // Progress emits are coalesced to a few per second so a downloading item's
   // frequent progress lines don't flood SSE subscribers / churn the event loop
@@ -88,6 +89,8 @@ export class DownloadQueue extends EventEmitter {
       // Save with a random filename unless the caller gave an explicit one. The
       // name is fixed at enqueue so a retry reuses it (yt-dlp --continue works).
       filename: input.filename || crypto.randomBytes(8).toString('hex'),
+      groupId: input.groupId,
+      groupTitle: input.groupTitle,
       title: 'Fetching info…',
       state: 'queued',
       progress: 0,
@@ -219,7 +222,26 @@ export class DownloadQueue extends EventEmitter {
   // starting the same item; each finished run calls pump() again from its
   // finally, so the next queued item starts automatically. `pumpRequested`
   // captures a pump() that arrives while the start-loop is running.
+  // Apply an action to many items atomically: no pump runs between them, so
+  // pausing/stopping "all" can't have the queue auto-start a fresh item mid-loop.
+  bulk(action: 'pause' | 'resume' | 'cancel' | 'retry' | 'remove', ids: string[]): void {
+    this.suppressPump = true;
+    try {
+      for (const id of ids) {
+        if (action === 'pause') this.pause(id);
+        else if (action === 'resume') this.resume(id);
+        else if (action === 'cancel') this.cancel(id);
+        else if (action === 'retry') this.retry(id);
+        else if (action === 'remove') this.remove(id);
+      }
+    } finally {
+      this.suppressPump = false;
+    }
+    this.pump();
+  }
+
   private pump(): void {
+    if (this.suppressPump) return;
     if (this.pumping) { this.pumpRequested = true; return; }
     this.pumping = true;
     try {

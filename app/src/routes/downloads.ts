@@ -48,6 +48,8 @@ function serialize(item: QueueItem): object {
     error: item.error,
     startedAt: item.createdAt,
     queuePos: queuePos(item),
+    groupId: item.groupId,
+    groupTitle: item.groupTitle,
   };
 }
 
@@ -132,6 +134,17 @@ router.post('/download/:id/reorder', requireAuth, (req, res) => {
 
 router.post('/downloads/clear', requireAuth, (_req, res) => {
   res.json({ ok: true, removed: downloadQueue.clearFinished() });
+});
+
+// Bulk pause/resume/cancel/retry/remove — applied atomically in the queue.
+router.post('/downloads/bulk', requireAuth, (req, res) => {
+  const action = String(req.body?.action || '');
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(String) : [];
+  if (!['pause', 'resume', 'cancel', 'retry', 'remove'].includes(action)) {
+    res.status(400).json({ error: 'Invalid action' }); return;
+  }
+  downloadQueue.bulk(action as 'pause' | 'resume' | 'cancel' | 'retry' | 'remove', ids);
+  res.json({ ok: true, count: ids.length });
 });
 
 // Proxy the (external) source thumbnail so the tray can show it pre-download.

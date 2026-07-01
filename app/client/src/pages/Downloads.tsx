@@ -1,10 +1,10 @@
-import { memo, useEffect, useMemo, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
   ArrowLeft, Plus, Search, Trash2, Pause, Play, X, RotateCw,
-  ChevronUp, ChevronDown, Download as DownloadIcon, FolderPlus, Loader2,
+  ChevronUp, ChevronDown, Download as DownloadIcon, FolderPlus, Loader2, Check, ListVideo,
 } from 'lucide-react';
 import { downloadsApi } from '@/api/downloads';
 import { videosApi } from '@/api/videos';
@@ -41,9 +41,11 @@ interface RowProps {
   job: DownloadJob;
   index: number;
   total: number;
+  selected: boolean;
+  onToggle: (id: string) => void;
   onAction: (fn: () => Promise<unknown>) => void;
 }
-const JobRow = memo(function JobRow({ job, index, total, onAction }: RowProps) {
+const JobRow = memo(function JobRow({ job, index, total, selected, onToggle, onAction }: RowProps) {
   const meta = STATE_META[job.status];
   const isActive = ACTIVE.includes(job.status);
   const isQueued = job.status === 'queued';
@@ -57,9 +59,18 @@ const JobRow = memo(function JobRow({ job, index, total, onAction }: RowProps) {
 
   return (
     <div
-      className="flex items-center gap-3 border-b border-border/60 px-3 py-3 sm:px-4"
+      className={cn('flex items-center gap-3 border-b border-border/60 px-3 py-3 sm:px-4', selected && 'bg-accent/5')}
       style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 72px' }}
     >
+      <button
+        onClick={() => onToggle(job.id)}
+        aria-label={selected ? 'Deselect' : 'Select'}
+        className={cn('flex h-5 w-5 shrink-0 items-center justify-center rounded-md border-2 transition-colors',
+          selected ? 'border-accent bg-accent text-white' : 'border-border text-transparent hover:border-accent/60')}
+      >
+        <Check className="h-3 w-3" strokeWidth={3} />
+      </button>
+
       <div className="h-10 w-16 shrink-0 overflow-hidden rounded-md bg-elevated">
         <img src={`/api/download/${job.id}/thumb`} alt="" className="h-full w-full object-cover"
           onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} />
@@ -109,6 +120,7 @@ export function Downloads() {
   const [jobs, setJobs] = useState<DownloadJob[]>([]);
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<Filter>('all');
+  const [selected, setSelected] = useState<Set<string>>(new Set());
 
   // Add bar
   const [url, setUrl] = useState('');
@@ -180,6 +192,43 @@ export function Downloads() {
   }, [jobs, search, filter]);
 
   const hasFinished = jobs.some(j => ['done', 'error'].includes(j.status));
+
+  // ── Selection + bulk actions ────────────────────────────────────────────────
+  const toggleSelect = useCallback((id: string) => setSelected(prev => {
+    const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n;
+  }), []);
+  const allFilteredSelected = filtered.length > 0 && filtered.every(j => selected.has(j.id));
+  const toggleSelectAll = () => setSelected(allFilteredSelected ? new Set() : new Set(filtered.map(j => j.id)));
+  const clearSelection = () => setSelected(new Set());
+  // One atomic bulk request — the queue applies it to all ids without the
+  // processor auto-starting a fresh download mid-operation.
+  const runBulk = (action: 'pause' | 'resume' | 'cancel' | 'remove') => {
+    downloadsApi.bulk(action, [...selected]).catch(() => {}).finally(() => setSelected(new Set()));
+  };
+  const selCount = selected.size;
+
+  // Group playlist items (shared groupId) into sections; singles stay loose.
+  const { groups, loose } = useMemo(() => {
+    const gmap = new Map<string, { title: string; jobs: DownloadJob[] }>();
+    const loose: DownloadJob[] = [];
+    for (const j of filtered) {
+      if (j.groupId) {
+        if (!gmap.has(j.groupId)) gmap.set(j.groupId, { title: j.groupTitle || 'Playlist', jobs: [] });
+        gmap.get(j.groupId)!.jobs.push(j);
+      } else loose.push(j);
+    }
+    return { groups: [...gmap.entries()].map(([id, g]) => ({ id, ...g })), loose };
+  }, [filtered]);
+
+  // Group-level controls act on the whole playlist via the atomic bulk endpoint.
+  const groupBulk = (action: 'pause' | 'resume' | 'cancel' | 'remove', ids: string[]) =>
+    downloadsApi.bulk(action, ids).catch(() => {});
+  const selectGroup = (ids: string[]) => setSelected(prev => {
+    const n = new Set(prev);
+    const allIn = ids.every(id => n.has(id));
+    ids.forEach(id => allIn ? n.delete(id) : n.add(id));
+    return n;
+  });
 
   const chips: { key: Filter; label: string }[] = [
     { key: 'all', label: 'All' }, { key: 'active', label: 'Active' },
@@ -275,6 +324,30 @@ export function Downloads() {
           </div>
         </div>
 
+        {/* Selection + bulk-action bar */}
+        <div className="mb-2 flex flex-wrap items-center gap-2">
+          <button onClick={toggleSelectAll} disabled={filtered.length === 0}
+            className="flex items-center gap-2 rounded-lg px-2 py-1 text-xs font-medium text-text-muted hover:bg-elevated disabled:opacity-40">
+            <span className={cn('flex h-4 w-4 items-center justify-center rounded border-2',
+              allFilteredSelected ? 'border-accent bg-accent text-white' : 'border-border text-transparent')}>
+              <Check className="h-2.5 w-2.5" strokeWidth={3} />
+            </span>
+            {allFilteredSelected ? 'Deselect all' : 'Select all'}
+          </button>
+          {selCount > 0 && (
+            <>
+              <span className="text-xs text-text-muted">{selCount} selected</span>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <button onClick={() => runBulk('pause')} className="flex items-center gap-1 rounded-lg bg-surface px-2.5 py-1 text-xs font-medium text-text-primary hover:bg-elevated"><Pause className="h-3.5 w-3.5" /> Pause</button>
+                <button onClick={() => runBulk('resume')} className="flex items-center gap-1 rounded-lg bg-surface px-2.5 py-1 text-xs font-medium text-text-primary hover:bg-elevated"><Play className="h-3.5 w-3.5" /> Resume</button>
+                <button onClick={() => runBulk('cancel')} className="flex items-center gap-1 rounded-lg bg-surface px-2.5 py-1 text-xs font-medium text-danger hover:bg-danger/10"><X className="h-3.5 w-3.5" /> Stop</button>
+                <button onClick={() => runBulk('remove')} className="flex items-center gap-1 rounded-lg bg-surface px-2.5 py-1 text-xs font-medium text-text-muted hover:bg-elevated"><Trash2 className="h-3.5 w-3.5" /> Remove</button>
+                <button onClick={clearSelection} className="rounded-lg px-2.5 py-1 text-xs font-medium text-text-muted hover:bg-elevated">Clear</button>
+              </div>
+            </>
+          )}
+        </div>
+
         {/* List */}
         <div className="flex-1 overflow-y-auto rounded-xl border border-border"
           style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}>
@@ -287,9 +360,48 @@ export function Downloads() {
               <p className="mt-1 text-xs text-text-muted">Paste a URL above to add one</p>
             </div>
           ) : (
-            filtered.map(job => (
-              <JobRow key={job.id} job={job} index={jobs.indexOf(job)} total={jobs.length} onAction={runAction} />
-            ))
+            <>
+              {/* Playlist groups — each its own section with group controls */}
+              {groups.map(g => {
+                const ids = g.jobs.map(j => j.id);
+                const done = g.jobs.filter(j => j.status === 'done').length;
+                const active = g.jobs.filter(j => ['starting', 'downloading', 'processing'].includes(j.status)).length;
+                const allSel = ids.every(id => selected.has(id));
+                return (
+                  <div key={g.id} className="border-b border-border/60">
+                    <div className="flex items-center gap-2 bg-elevated/40 px-3 py-2 sm:px-4">
+                      <button onClick={() => selectGroup(ids)} aria-label="Select playlist"
+                        className={cn('flex h-5 w-5 shrink-0 items-center justify-center rounded-md border-2',
+                          allSel ? 'border-accent bg-accent text-white' : 'border-border text-transparent hover:border-accent/60')}>
+                        <Check className="h-3 w-3" strokeWidth={3} />
+                      </button>
+                      <ListVideo className="h-4 w-4 shrink-0 text-accent" />
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-semibold text-text-primary">{g.title}</p>
+                        <p className="text-[11px] text-text-muted">{g.jobs.length} videos · {done} done{active ? ` · ${active} active` : ''}</p>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-0.5">
+                        <button onClick={() => groupBulk('pause', ids)} title="Pause playlist" className="flex h-8 w-8 items-center justify-center rounded-lg text-text-muted hover:bg-elevated hover:text-text-primary"><Pause className="h-4 w-4" /></button>
+                        <button onClick={() => groupBulk('resume', ids)} title="Resume playlist" className="flex h-8 w-8 items-center justify-center rounded-lg text-text-muted hover:bg-accent/10 hover:text-accent"><Play className="h-4 w-4" /></button>
+                        <button onClick={() => groupBulk('cancel', ids)} title="Stop playlist" className="flex h-8 w-8 items-center justify-center rounded-lg text-text-muted hover:bg-danger/10 hover:text-danger"><X className="h-4 w-4" /></button>
+                        <button onClick={() => groupBulk('remove', ids)} title="Remove playlist" className="flex h-8 w-8 items-center justify-center rounded-lg text-text-muted hover:bg-elevated"><Trash2 className="h-4 w-4" /></button>
+                      </div>
+                    </div>
+                    <div className="pl-3 sm:pl-6">
+                      {g.jobs.map(job => (
+                        <JobRow key={job.id} job={job} index={jobs.indexOf(job)} total={jobs.length}
+                          selected={selected.has(job.id)} onToggle={toggleSelect} onAction={runAction} />
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+              {/* Single (non-playlist) downloads */}
+              {loose.map(job => (
+                <JobRow key={job.id} job={job} index={jobs.indexOf(job)} total={jobs.length}
+                  selected={selected.has(job.id)} onToggle={toggleSelect} onAction={runAction} />
+              ))}
+            </>
           )}
         </div>
       </div>

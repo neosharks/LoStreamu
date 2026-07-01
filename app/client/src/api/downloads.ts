@@ -21,6 +21,9 @@ export const downloadsApi = {
 
   clear: () => api.post<{ removed: number }>('/downloads/clear').then(r => r.data),
 
+  bulk: (action: 'pause' | 'resume' | 'cancel' | 'retry' | 'remove', ids: string[]) =>
+    api.post('/downloads/bulk', { action, ids }).then(r => r.data),
+
   probePlaylist: (url: string) =>
     api.post<PlaylistProbe>('/playlist/probe', { url }).then(r => r.data),
 
