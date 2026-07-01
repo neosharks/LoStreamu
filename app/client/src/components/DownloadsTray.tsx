@@ -13,12 +13,9 @@ import type { DownloadJob, BatchJob } from '@/types';
 function TrayJobRow({ jobId, onOpenModal }: { jobId: string; onOpenModal: () => void }) {
   const { jobs, updateJob, removeJob } = useDownloadsStore();
   const job = jobs.find(j => j.id === jobId);
-
-  // Subscribe for all non-terminal statuses — queued/paused need position updates too
-  useSSE<Partial<DownloadJob>>(
-    job && !['done', 'error'].includes(job.status) ? `/api/download/${job.id}/events` : null,
-    (_, data) => updateJob(jobId, data),
-  );
+  // NOTE: no per-job SSE here — the whole queue is observed via ONE connection in
+  // DownloadsTray. Per-job EventSources used to exhaust the browser's ~6
+  // connections-per-host limit during downloads and freeze video streaming.
 
   if (!job) return null;
 
@@ -171,9 +168,14 @@ interface DownloadsTrayProps {
 }
 
 export function DownloadsTray({ onOpenModal }: DownloadsTrayProps) {
-  const { jobs, batches } = useDownloadsStore();
+  const { jobs, batches, setJobs } = useDownloadsStore();
   const [expanded, setExpanded] = useState(true);
   const navigate = useNavigate();
+
+  // ONE connection observes the entire queue (replaces N per-job EventSources).
+  useSSE<DownloadJob[]>('/api/downloads/events', (name, data) => {
+    if (name === 'queue' && Array.isArray(data)) setJobs(data);
+  });
 
   if (jobs.length === 0 && batches.length === 0) return null;
 

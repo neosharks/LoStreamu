@@ -8,6 +8,7 @@ interface DownloadsState {
 
   addJob: (job: DownloadJob) => void;
   addBatch: (batch: BatchJob) => void;
+  setJobs: (jobs: DownloadJob[]) => void;
   updateJob: (id: string, patch: Partial<DownloadJob>) => void;
   updateBatch: (id: string, patch: Partial<BatchJob>) => void;
   removeJob: (id: string) => void;
@@ -27,6 +28,9 @@ export const useDownloadsStore = create<DownloadsState>((set, get) => ({
   addBatch: (batch) => set(s => ({
     batches: s.batches.some(b => b.id === batch.id) ? s.batches : [...s.batches, batch],
   })),
+
+  // Replace the whole jobs list from the single whole-queue SSE (server truth).
+  setJobs: (jobs) => set({ jobs, hydrated: true }),
 
   updateJob: (id, patch) => set(s => ({
     jobs: s.jobs.map(j => j.id === id ? { ...j, ...patch } : j),
