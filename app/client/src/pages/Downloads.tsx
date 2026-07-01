@@ -9,6 +9,7 @@ import {
 import { downloadsApi } from '@/api/downloads';
 import { videosApi } from '@/api/videos';
 import { useSSE } from '@/hooks/useSSE';
+import { PlaylistReviewModal } from '@/components/PlaylistReviewModal';
 import { Progress } from '@/components/ui/progress';
 import { cn } from '@/lib/utils';
 import type { DownloadJob, DownloadStatus, FolderTree } from '@/types';
@@ -117,6 +118,8 @@ export function Downloads() {
   // Add bar
   const [url, setUrl] = useState('');
   const [folder, setFolder] = useState('');
+  const [isPlaylist, setIsPlaylist] = useState(false);
+  const [reviewOpen, setReviewOpen] = useState(false);
   const [newFolderOpen, setNewFolderOpen] = useState(false);
   const [newFolder, setNewFolder] = useState('');
 
@@ -148,6 +151,15 @@ export function Downloads() {
 
   // Fire an action, then let the whole-queue SSE push the new state back.
   const runAction = (fn: () => Promise<unknown>) => { fn().catch(() => {}); };
+
+  const looksLikePlaylist = (v: string) => /[?&]list=|\/playlist|\/sets\/|\/album\//i.test(v);
+
+  // Playlist → open the review modal; single URL → enqueue directly.
+  const submitAdd = () => {
+    if (!url.trim()) return;
+    if (isPlaylist) setReviewOpen(true);
+    else addMutation.mutate();
+  };
 
   const counts = useMemo(() => ({
     all: jobs.length,
@@ -208,8 +220,8 @@ export function Downloads() {
           <div className="flex flex-col gap-2 sm:flex-row">
             <input
               value={url}
-              onChange={e => setUrl(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter' && url.trim()) addMutation.mutate(); }}
+              onChange={e => { setUrl(e.target.value); if (looksLikePlaylist(e.target.value)) setIsPlaylist(true); }}
+              onKeyDown={e => { if (e.key === 'Enter') submitAdd(); }}
               placeholder="Paste a video or playlist URL…"
               className="min-w-0 flex-1 rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary placeholder:text-text-subtle focus:outline-none focus:ring-2 focus:ring-accent"
             />
@@ -222,12 +234,21 @@ export function Downloads() {
                 className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border text-text-muted hover:bg-elevated hover:text-text-primary">
                 <FolderPlus className="h-4 w-4" />
               </button>
-              <button onClick={() => addMutation.mutate()} disabled={!url.trim() || addMutation.isPending}
+              <button onClick={submitAdd} disabled={!url.trim() || addMutation.isPending}
                 className="flex h-9 shrink-0 items-center gap-1.5 rounded-lg bg-accent px-4 text-sm font-semibold text-white hover:bg-accent-hover disabled:opacity-50">
-                {addMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />} Add
+                {addMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+                {isPlaylist ? 'Review' : 'Add'}
               </button>
             </div>
           </div>
+
+          {/* Playlist toggle */}
+          <label className="flex w-fit cursor-pointer items-center gap-2 text-xs text-text-muted select-none">
+            <input type="checkbox" checked={isPlaylist} onChange={e => setIsPlaylist(e.target.checked)}
+              className="h-4 w-4 rounded border-border accent-accent" />
+            This is a playlist (review &amp; pick videos before adding)
+          </label>
+
           {newFolderOpen && (
             <div className="flex gap-2">
               <input value={newFolder} onChange={e => setNewFolder(e.target.value)}
@@ -276,6 +297,14 @@ export function Downloads() {
           )}
         </div>
       </div>
+
+      <PlaylistReviewModal
+        open={reviewOpen}
+        url={url}
+        folder={folder}
+        onClose={() => setReviewOpen(false)}
+        onAdded={() => { setUrl(''); setIsPlaylist(false); }}
+      />
     </div>
   );
 }
