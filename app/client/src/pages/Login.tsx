@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import { Loader2, Play } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -9,6 +10,7 @@ type Mode = 'loading' | 'login' | 'setup';
 
 export function Login() {
   const navigate = useNavigate();
+  const qc = useQueryClient();
   const [mode, setMode] = useState<Mode>('loading');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -31,6 +33,8 @@ export function Login() {
     try {
       if (mode === 'setup') await authApi.signup(email, password);
       else await authApi.login(email, password);
+      // Refresh the cached session check so the route guard sees the new session.
+      await qc.invalidateQueries({ queryKey: ['me'] });
       navigate('/');
     } catch (err: any) {
       setError(err.response?.data?.error || 'Something went wrong.');
