@@ -1,0 +1,57 @@
+name: Build release tarball
+
+# The in-app self-updater installs from streamvault-app.tar.gz (a prebuilt
+# artifact committed at repo root), while the "update available" banner reads
+# app/package.json. If the two drift, the banner shows a new version but
+# installing re-extracts the old build. This workflow keeps the tarball in
+# lockstep with the source: on every change under app/, it repacks the tarball
+# at the current package.json version and commits it back.
+#
+# Version bumps stay a manual, deliberate act (edit app/package.json, or run
+# `./build-archive.sh` locally which bumps + packs). CI never bumps — it only
+# guarantees the online tarball matches whatever source + version is on main.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'app/**'
+      - 'build-archive.sh'
+      - '.github/workflows/build-release-tarball.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# Never run two tarball builds at once; let an in-flight one finish first.
+concurrency:
+  group: build-release-tarball
+  cancel-in-progress: false
+
+jobs:
+  tarball:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # NO_BUMP=1: CI repacks at the current version, it does not bump.
+      - name: Rebuild tarball from current source
+        run: NO_BUMP=1 bash build-archive.sh
+
+      - name: Commit tarball if it changed
+        run: |
+          if git diff --quiet -- streamvault-app.tar.gz; then
+            echo "Tarball unchanged — nothing to commit."
+            exit 0
+          fi
+          VERSION=$(node -p "require('./app/package.json').version")
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add streamvault-app.tar.gz
+          git commit -m "ci: rebuild release tarball for v${VERSION} [skip ci]"
+          # Pushed with GITHUB_TOKEN, so this commit does not retrigger the workflow.
+          git push
