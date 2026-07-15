@@ -31,6 +31,7 @@ tar -czf "$OUT" \
   --exclude='./cookies.txt' \
   --exclude='./yt-dlp' \
   --exclude='./thumbnails' \
+  --exclude='./previews' \
   --exclude='./media' \
   --exclude='./*.mp4' \
   -C "$SRC" .

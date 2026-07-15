@@ -7,7 +7,7 @@ import {
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { usePlayerStore } from '@/stores/playerStore';
-import { videosApi } from '@/api/videos';
+import { videosApi, previewApi, type PreviewMeta } from '@/api/videos';
 import { formatDuration, cn } from '@/lib/utils';
 
 const SEEK_STEP = 10;
@@ -49,6 +49,7 @@ export function Player() {
   const [buffering, setBuffering] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [preview, setPreview] = useState<PreviewMeta | null>(null);
 
   const idx = video && playlist.length ? playlist.findIndex(v => v.id === video.id) : -1;
   const hasPrev = idx > 0;
@@ -178,6 +179,22 @@ export function Player() {
       v.removeEventListener('canplay', onPlaying);
     };
   }, [video?.id, hasNext, next, revealControls]);
+
+  // ── Scrub-preview sprite ──────────────────────────────────────────────────────
+  // Ask the server to generate the hover-preview sprite when a video opens, and
+  // tell it to delete the sprite when we leave the video (switch or close). The
+  // server also wipes on boot + sweeps idle sprites, so nothing lingers on disk.
+  useEffect(() => {
+    if (!video) return;
+    const id = video.id;
+    let active = true;
+    setPreview(null);
+    previewApi.get(id).then(meta => { if (active) setPreview(meta); }).catch(() => {});
+    return () => {
+      active = false;
+      previewApi.remove(id);
+    };
+  }, [video?.id]);
 
   // ── Actions ───────────────────────────────────────────────────────────────────
   const togglePlay = useCallback(() => {
@@ -348,6 +365,21 @@ export function Player() {
 
   // Timestamp shown above the seek bar while hovering/scrubbing.
   const hoverTime = (seekHoverX ?? 0) * duration;
+
+  // Sprite tile for the hovered timestamp (background-position into the sheet).
+  const previewTile = (() => {
+    if (!preview || seekHoverX === null || !duration) return null;
+    const i = Math.min(preview.count - 1, Math.max(0, Math.floor(hoverTime / preview.interval)));
+    const col = i % preview.cols;
+    const row = Math.floor(i / preview.cols);
+    return {
+      width: preview.tileW,
+      height: preview.tileH,
+      backgroundImage: `url(${preview.spriteUrl})`,
+      backgroundSize: `${preview.cols * preview.tileW}px ${preview.rows * preview.tileH}px`,
+      backgroundPosition: `-${col * preview.tileW}px -${row * preview.tileH}px`,
+    };
+  })();
 
   const VolumeIcon = muted || volume === 0 ? VolumeX : volume < 0.5 ? Volume1 : Volume2;
 
@@ -558,18 +590,26 @@ export function Player() {
 
         {/* Seek bar */}
         <div className="relative px-1">
-          {/* Timestamp tooltip while hovering / scrubbing */}
+          {/* Preview + timestamp tooltip while hovering / scrubbing */}
           {seekHoverX !== null && (
             <div
-              className="absolute bottom-full mb-2 pointer-events-none rounded-lg bg-black/80 px-2 py-1 shadow-xl"
+              className="absolute bottom-full mb-2 pointer-events-none flex flex-col items-center gap-1"
               style={{
-                left: `clamp(32px, ${seekHoverX * 100}%, calc(100% - 32px))`,
+                left: `clamp(${(previewTile?.width ?? 60) / 2 + 8}px, ${seekHoverX * 100}%, calc(100% - ${(previewTile?.width ?? 60) / 2 + 8}px))`,
                 transform: 'translateX(-50%)',
               }}
             >
-              <p className="text-xs font-mono font-bold text-white tabular-nums">
-                {formatDuration(hoverTime)}
-              </p>
+              {previewTile && (
+                <div
+                  className="overflow-hidden rounded-lg border border-white/20 bg-black shadow-2xl bg-no-repeat"
+                  style={previewTile}
+                />
+              )}
+              <div className="rounded-lg bg-black/80 px-2 py-1 shadow-xl">
+                <p className="text-xs font-mono font-bold text-white tabular-nums">
+                  {formatDuration(hoverTime)}
+                </p>
+              </div>
             </div>
           )}
 

@@ -17,6 +17,8 @@ import batchRouter from './routes/batch';
 import settingsRouter from './routes/settings';
 import uploadRouter from './routes/upload';
 import appUpdateRouter from './routes/appUpdate';
+import previewRouter from './routes/preview';
+import { initPreviews } from './services/preview';
 import { requireAuth } from './middleware/auth';
 import { errorHandler } from './middleware/error';
 
@@ -116,6 +118,7 @@ app.use('/api', batchRouter);
 app.use('/api', settingsRouter);
 app.use('/api', uploadRouter);
 app.use('/api', appUpdateRouter);
+app.use('/api', previewRouter);
 
 // ── Serve React SPA ───────────────────────────────────────────────────────────
 
@@ -136,6 +139,7 @@ app.listen(PORT, () => {
   console.log(`LoStreamu running on http://0.0.0.0:${PORT}`);
   console.log(`Media dir: ${config.mediaDir}`);
   rescan();
+  initPreviews(); // wipe any stale scrub-preview sprites + start the idle sweep
   // Defer CPU work so the server can answer requests immediately on boot instead
   // of racing ffprobe / yt-dlp against the first library load.
   setTimeout(() => buildMeta().catch(() => {}), 4000);

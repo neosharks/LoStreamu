@@ -16,6 +16,7 @@ app/media/*
 app/thumbnails/*.jpg
 app/thumbnails/*.vtt
 !app/thumbnails/.gitkeep
+app/previews/
 
 app/client/*.tsbuildinfo
 app/*.tsbuildinfo

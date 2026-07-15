@@ -1,6 +1,21 @@
 import api from './client';
 import type { Video, FolderTree, ServerStats } from '../types';
 
+export interface PreviewMeta {
+  cols: number;
+  rows: number;
+  count: number;
+  interval: number;
+  tileW: number;
+  tileH: number;
+  spriteUrl: string;
+}
+
+export const previewApi = {
+  get: (id: string) => api.get<PreviewMeta>(`/preview/${id}`).then(r => r.data),
+  remove: (id: string) => api.delete(`/preview/${id}`).then(r => r.data).catch(() => {}),
+};
+
 export const videosApi = {
   list: (folder = '', all = false) =>
     api.get<Video[]>('/videos', { params: { folder, ...(all && { all: '1' }) } }).then(r => r.data),
