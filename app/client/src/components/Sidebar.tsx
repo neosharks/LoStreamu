@@ -1,10 +1,72 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { Folder, FolderOpen, ChevronRight, Film, Plus, Pencil, Trash2, Move, X, MoreVertical } from 'lucide-react';
+import { useQuery, useMutation } from '@tanstack/react-query';
+import { Folder, FolderOpen, ChevronRight, Film, Plus, Pencil, Trash2, Move, X, MoreVertical, LogOut, Loader2 } from 'lucide-react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { videosApi } from '@/api/videos';
-import { cn } from '@/lib/utils';
+import { authApi } from '@/api/settings';
+import { cn, formatBytes } from '@/lib/utils';
 import type { FolderTree } from '@/types';
+
+// Library stats + sign-out, pinned at the bottom of the folder list. Lives here
+// so both the desktop sidebar and the mobile drawer show it — giving mobile a
+// logout without opening Settings, and surfacing storage/video counts at a glance.
+function SidebarFooter() {
+  const { data: stats } = useQuery({
+    queryKey: ['stats'],
+    queryFn: videosApi.stats,
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+  });
+  const logoutMutation = useMutation({
+    mutationFn: authApi.logout,
+    onSuccess: () => { window.location.href = '/login'; },
+  });
+
+  const disk = stats?.disk;
+  const pct = disk && disk.total ? (disk.used / disk.total) * 100 : 0;
+  const free = disk ? Math.max(0, disk.total - disk.used) : 0;
+  const barColor = pct > 90 ? 'bg-danger' : pct > 75 ? 'bg-warning' : 'bg-accent';
+
+  return (
+    <div className="shrink-0 space-y-3 border-t border-border p-3">
+      <div className="space-y-2 rounded-xl border border-border bg-elevated/40 p-3">
+        <div className="flex items-center justify-between text-xs">
+          <span className="text-text-muted">Videos</span>
+          <span className="font-mono tabular-nums text-text-primary">{stats ? stats.videos.toLocaleString() : '—'}</span>
+        </div>
+        {disk ? (
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-text-muted">Storage</span>
+              <span className="font-mono tabular-nums text-text-primary">{pct.toFixed(0)}%</span>
+            </div>
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-border">
+              <div className={cn('h-full rounded-full transition-all', barColor)} style={{ width: `${pct.toFixed(1)}%` }} />
+            </div>
+            <div className="flex items-center justify-between text-[10px] tabular-nums text-text-subtle">
+              <span>{formatBytes(disk.used)} used</span>
+              <span>{formatBytes(free)} free</span>
+              <span>{formatBytes(disk.total)} total</span>
+            </div>
+          </div>
+        ) : (
+          <div className="flex items-center justify-between text-xs">
+            <span className="text-text-muted">Storage</span>
+            <span className="font-mono text-text-subtle">n/a</span>
+          </div>
+        )}
+      </div>
+      <button
+        onClick={() => logoutMutation.mutate()}
+        disabled={logoutMutation.isPending}
+        className="flex w-full items-center justify-center gap-2 rounded-lg border border-danger/30 py-2 text-sm font-medium text-danger transition-colors hover:border-danger/50 hover:bg-danger/10 disabled:opacity-60"
+      >
+        {logoutMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <LogOut className="h-4 w-4" />}
+        Sign out
+      </button>
+    </div>
+  );
+}
 
 const MIN_WIDTH = 150;
 const MAX_WIDTH = 480;
@@ -216,10 +278,13 @@ export function Sidebar({
     <>
       {/* Desktop sidebar */}
       <aside
-        className="relative hidden shrink-0 flex-col overflow-y-auto border-r border-border lg:flex"
+        className="relative hidden shrink-0 flex-col overflow-hidden border-r border-border lg:flex"
         style={{ width }}
       >
-        <TreeContent {...treeProps} />
+        <div className="flex-1 overflow-y-auto">
+          <TreeContent {...treeProps} />
+        </div>
+        <SidebarFooter />
         <div
           onMouseDown={onDragStart}
           className="absolute right-0 top-0 h-full w-1 cursor-col-resize hover:bg-accent/40 active:bg-accent/60 transition-colors"
@@ -238,12 +303,12 @@ export function Sidebar({
       {/* Mobile drawer */}
       <aside
         className={cn(
-          'fixed inset-y-0 left-0 z-50 w-72 overflow-y-auto border-r border-border bg-surface transition-transform duration-200 lg:hidden',
+          'fixed inset-y-0 left-0 z-50 flex w-72 flex-col overflow-hidden border-r border-border bg-surface transition-transform duration-200 lg:hidden',
           mobileOpen ? 'translate-x-0' : '-translate-x-full',
         )}
         style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
       >
-        <div className="flex items-center justify-between border-b border-border px-4 py-3">
+        <div className="flex shrink-0 items-center justify-between border-b border-border px-4 py-3">
           <p className="text-sm font-semibold text-text-primary">Library</p>
           <button
             onClick={onMobileClose}
@@ -252,7 +317,10 @@ export function Sidebar({
             <X className="h-4 w-4" />
           </button>
         </div>
-        <TreeContent {...treeProps} />
+        <div className="flex-1 overflow-y-auto">
+          <TreeContent {...treeProps} />
+        </div>
+        <SidebarFooter />
       </aside>
     </>
   );

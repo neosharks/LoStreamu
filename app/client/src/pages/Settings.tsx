@@ -3,22 +3,16 @@ import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   ChevronLeft, User, Users, Wifi, Package, RefreshCw, LogOut,
-  Loader2, Trash2, UserPlus, BarChart2, Sparkles, Image as ImageIcon, Wrench,
+  Loader2, Trash2, UserPlus, Sparkles, Image as ImageIcon, Wrench,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Badge } from '@/components/ui/badge';
 import { authApi, settingsApi, usersApi } from '@/api/settings';
 import { videosApi } from '@/api/videos';
 import { AppUpdateModal } from '@/components/AppUpdateModal';
-import { StatsModal } from '@/components/StatsModal';
-
-function formatBytes(n: number): string {
-  if (!n) return '0 B';
-  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-  const i = Math.min(units.length - 1, Math.floor(Math.log(n) / Math.log(1024)));
-  return `${(n / 1024 ** i).toFixed(i ? 1 : 0)} ${units[i]}`;
-}
+import { formatBytes } from '@/lib/utils';
 
 export function Settings() {
   const navigate = useNavigate();
@@ -37,13 +31,18 @@ export function Settings() {
     staleTime: 60 * 60 * 1000,
     retry: false,
   });
+  const { data: ytdlp } = useQuery({
+    queryKey: ['ytdlp-version'],
+    queryFn: settingsApi.ytdlpVersion,
+    enabled: !!me?.isAdmin,
+    retry: false,
+  });
 
   const [email, setEmail] = useState('');
   const [currentPw, setCurrentPw] = useState('');
   const [newPw, setNewPw] = useState('');
   const [proxy, setProxy] = useState('');
   const [showUpdate, setShowUpdate] = useState(false);
-  const [showStats, setShowStats] = useState(false);
   const [newEmail, setNewEmail] = useState('');
   const [newPassword, setNewPassword] = useState('');
 
@@ -121,6 +120,15 @@ export function Settings() {
       qc.invalidateQueries({ queryKey: ['videos'] });
     },
     onError: (err: any) => toast.error(err.response?.data?.error || 'Thumbnail regeneration failed'),
+  });
+
+  const ytdlpUpdateMutation = useMutation({
+    mutationFn: settingsApi.ytdlpUpdate,
+    onSuccess: (data) => {
+      toast.success(`yt-dlp updated to ${data.version}`);
+      qc.invalidateQueries({ queryKey: ['ytdlp-version'] });
+    },
+    onError: (err: any) => toast.error(err.response?.data?.error || 'yt-dlp update failed'),
   });
 
   const logoutMutation = useMutation({
@@ -267,17 +275,12 @@ export function Settings() {
                 <p className="text-xs text-text-muted">
                   Force a rescan of the media directory to pick up files added externally.
                 </p>
-                <div className="flex gap-2">
-                  <Button variant="secondary" onClick={() => rescanMutation.mutate()} disabled={rescanMutation.isPending} className="flex-1">
-                    {rescanMutation.isPending
-                      ? <Loader2 className="h-4 w-4 animate-spin" />
-                      : <RefreshCw className="h-4 w-4" />}
-                    Rescan
-                  </Button>
-                  <Button variant="secondary" onClick={() => setShowStats(true)} className="flex-1">
-                    <BarChart2 className="h-4 w-4" /> Server stats
-                  </Button>
-                </div>
+                <Button variant="secondary" onClick={() => rescanMutation.mutate()} disabled={rescanMutation.isPending} className="w-full">
+                  {rescanMutation.isPending
+                    ? <Loader2 className="h-4 w-4 animate-spin" />
+                    : <RefreshCw className="h-4 w-4" />}
+                  Rescan
+                </Button>
               </div>
             </section>
 
@@ -353,6 +356,28 @@ export function Settings() {
                   <Button variant="secondary" className="w-full" onClick={() => setShowUpdate(true)}>
                     Update application
                   </Button>
+
+                  {/* yt-dlp component version + update */}
+                  {ytdlp?.current && (
+                    <div className="flex items-center justify-between gap-3 border-t border-border pt-3">
+                      <div className="flex min-w-0 items-center gap-2">
+                        <span className="text-xs text-text-muted">yt-dlp</span>
+                        <span className="font-mono text-xs text-text-primary">{ytdlp.current}</span>
+                        {ytdlp.outdated
+                          ? <Badge variant="warning">→ {ytdlp.latest}</Badge>
+                          : <Badge variant="success">up to date</Badge>}
+                      </div>
+                      <Button
+                        size="sm"
+                        variant={ytdlp.outdated ? 'default' : 'secondary'}
+                        onClick={() => ytdlpUpdateMutation.mutate()}
+                        disabled={ytdlpUpdateMutation.isPending}
+                        className="h-7 shrink-0 px-2 text-xs"
+                      >
+                        {ytdlpUpdateMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Update'}
+                      </Button>
+                    </div>
+                  )}
                 </div>
               </section>
             )}
@@ -377,7 +402,6 @@ export function Settings() {
       </div>
 
       <AppUpdateModal open={showUpdate} onClose={() => setShowUpdate(false)} />
-      <StatsModal open={showStats} onClose={() => setShowStats(false)} />
     </>
   );
 }

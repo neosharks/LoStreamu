@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { BarChart2, RefreshCw, Settings, LogOut, Plus, Download } from 'lucide-react';
+import { RefreshCw, Settings, LogOut, Plus, Download } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from './ui/button';
 import { Logo } from './Logo';
@@ -12,13 +12,12 @@ import { AppUpdateModal } from './AppUpdateModal';
 
 interface HeaderProps {
   onAddVideos: () => void;
-  onStats: () => void;
   videoCount: number;
   search: string;
   onSearch: (q: string) => void;
 }
 
-export function Header({ onAddVideos, onStats, videoCount, search, onSearch }: HeaderProps) {
+export function Header({ onAddVideos, videoCount, search, onSearch }: HeaderProps) {
   const navigate = useNavigate();
   const qc = useQueryClient();
   const [showUpdate, setShowUpdate] = useState(false);
@@ -105,9 +104,6 @@ export function Header({ onAddVideos, onStats, videoCount, search, onSearch }: H
         </Button>
         <Button size="icon" variant="ghost" onClick={() => navigate('/downloads')} title="Downloads">
           <Download className="h-4 w-4" />
-        </Button>
-        <Button size="icon" variant="ghost" onClick={onStats} title="Server stats">
-          <BarChart2 className="h-4 w-4" />
         </Button>
         <Button
           size="icon" variant="ghost"

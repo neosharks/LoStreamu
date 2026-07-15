@@ -10,7 +10,6 @@ import { Button } from '@/components/ui/button';
 import { Player } from '@/components/Player';
 import { AddVideosModal } from '@/components/AddVideosModal';
 import { DownloadsTray } from '@/components/DownloadsTray';
-import { StatsModal } from '@/components/StatsModal';
 import { RenameModal } from '@/components/RenameModal';
 import { ConfirmModal } from '@/components/ConfirmModal';
 import { MoveModal } from '@/components/MoveModal';
@@ -54,7 +53,6 @@ export function Library() {
   // Fresh seed each load so the default random order differs every visit.
   const [shuffleSeed, setShuffleSeed] = useState(() => Math.floor(Math.random() * 1_000_000) + 1);
   const [showAdd, setShowAdd] = useState(false);
-  const [showStats, setShowStats] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
 
   // Bulk selection
@@ -217,7 +215,6 @@ export function Library() {
     <div className="flex h-screen flex-col overflow-hidden">
       <Header
         onAddVideos={() => setShowAdd(true)}
-        onStats={() => setShowStats(true)}
         videoCount={videos.length}
         search={search}
         onSearch={setSearch}
@@ -392,7 +389,6 @@ export function Library() {
       {nowPlaying && <Player />}
       <AddVideosModal open={showAdd} onClose={() => setShowAdd(false)} currentFolder={folder} />
       {!showAdd && <DownloadsTray onOpenModal={() => setShowAdd(true)} />}
-      <StatsModal open={showStats} onClose={() => setShowStats(false)} />
 
       {/* Video rename */}
       <RenameModal
