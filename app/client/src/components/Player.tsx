@@ -7,7 +7,7 @@ import {
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { usePlayerStore } from '@/stores/playerStore';
-import { videosApi, previewApi, type PreviewMeta } from '@/api/videos';
+import { videosApi, previewApi, type PreviewReady } from '@/api/videos';
 import { formatDuration, cn } from '@/lib/utils';
 
 const SEEK_STEP = 10;
@@ -49,7 +49,9 @@ export function Player() {
   const [buffering, setBuffering] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const [preview, setPreview] = useState<PreviewMeta | null>(null);
+  const [preview, setPreview] = useState<PreviewReady | null>(null);
+  const [previewStatus, setPreviewStatus] = useState<'generating' | 'ready' | 'error'>('generating');
+  const [previewProgress, setPreviewProgress] = useState(0);
 
   const idx = video && playlist.length ? playlist.findIndex(v => v.id === video.id) : -1;
   const hasPrev = idx > 0;
@@ -180,21 +182,46 @@ export function Player() {
     };
   }, [video?.id, hasNext, next, revealControls]);
 
-  // ── Scrub-preview sprite ──────────────────────────────────────────────────────
-  // Ask the server to generate the hover-preview sprite when a video opens, and
-  // tell it to delete the sprite when we leave the video (switch or close). The
-  // server also wipes on boot + sweeps idle sprites, so nothing lingers on disk.
+  // ── Scrub-preview frames ──────────────────────────────────────────────────────
+  // On play, tell the server to generate the hover-preview frames and poll until
+  // they're ready (showing progress). On leaving the video (switch/close) the
+  // server deletes them; it also wipes on boot + sweeps idle, so nothing lingers.
   useEffect(() => {
     if (!video) return;
     const id = video.id;
     let active = true;
+    let timer: ReturnType<typeof setTimeout>;
+
     setPreview(null);
-    previewApi.get(id).then(meta => { if (active) setPreview(meta); }).catch(() => {});
+    setPreviewStatus('generating');
+    setPreviewProgress(0);
+
+    const poll = async () => {
+      try {
+        const r = await previewApi.get(id);
+        if (!active) return;
+        if (r.status === 'ready') { setPreview(r); setPreviewStatus('ready'); }
+        else if (r.status === 'generating') { setPreviewProgress(r.progress); timer = setTimeout(poll, 1200); }
+        else setPreviewStatus('error');
+      } catch { if (active) setPreviewStatus('error'); }
+    };
+    poll();
+
     return () => {
       active = false;
+      clearTimeout(timer);
       previewApi.remove(id);
     };
   }, [video?.id]);
+
+  // Warm the browser cache once frames are ready so hovering is instant.
+  useEffect(() => {
+    if (previewStatus !== 'ready' || !preview) return;
+    for (let i = 0; i < preview.count; i++) {
+      const img = new Image();
+      img.src = `${preview.frameBase}${i}.jpg`;
+    }
+  }, [previewStatus, preview]);
 
   // ── Actions ───────────────────────────────────────────────────────────────────
   const togglePlay = useCallback(() => {
@@ -366,20 +393,13 @@ export function Player() {
   // Timestamp shown above the seek bar while hovering/scrubbing.
   const hoverTime = (seekHoverX ?? 0) * duration;
 
-  // Sprite tile for the hovered timestamp (background-position into the sheet).
-  const previewTile = (() => {
+  // Preview frame for the hovered timestamp.
+  const previewFrame = (() => {
     if (!preview || seekHoverX === null || !duration) return null;
     const i = Math.min(preview.count - 1, Math.max(0, Math.floor(hoverTime / preview.interval)));
-    const col = i % preview.cols;
-    const row = Math.floor(i / preview.cols);
-    return {
-      width: preview.tileW,
-      height: preview.tileH,
-      backgroundImage: `url(${preview.spriteUrl})`,
-      backgroundSize: `${preview.cols * preview.tileW}px ${preview.rows * preview.tileH}px`,
-      backgroundPosition: `-${col * preview.tileW}px -${row * preview.tileH}px`,
-    };
+    return { src: `${preview.frameBase}${i}.jpg`, width: preview.tileW, height: preview.tileH };
   })();
+  const previewW = preview?.tileW ?? 160;
 
   const VolumeIcon = muted || volume === 0 ? VolumeX : volume < 0.5 ? Volume1 : Volume2;
 
@@ -595,16 +615,30 @@ export function Player() {
             <div
               className="absolute bottom-full mb-2 pointer-events-none flex flex-col items-center gap-1"
               style={{
-                left: `clamp(${(previewTile?.width ?? 60) / 2 + 8}px, ${seekHoverX * 100}%, calc(100% - ${(previewTile?.width ?? 60) / 2 + 8}px))`,
+                left: `clamp(${previewW / 2 + 8}px, ${seekHoverX * 100}%, calc(100% - ${previewW / 2 + 8}px))`,
                 transform: 'translateX(-50%)',
               }}
             >
-              {previewTile && (
-                <div
-                  className="overflow-hidden rounded-lg border border-white/20 bg-black shadow-2xl bg-no-repeat"
-                  style={previewTile}
+              {previewStatus === 'ready' && previewFrame ? (
+                <img
+                  src={previewFrame.src}
+                  width={previewFrame.width}
+                  height={previewFrame.height}
+                  alt=""
+                  draggable={false}
+                  className="rounded-lg border border-white/20 bg-black object-cover shadow-2xl"
                 />
-              )}
+              ) : previewStatus === 'generating' ? (
+                <div
+                  className="flex flex-col items-center justify-center gap-1 rounded-lg border border-white/15 bg-black/85 shadow-2xl"
+                  style={{ width: previewW, height: Math.round(previewW * 9 / 16) }}
+                >
+                  <Loader2 className="h-4 w-4 animate-spin text-white/80" />
+                  <span className="text-[10px] font-medium text-white/70">
+                    Generating preview… {Math.round(previewProgress * 100)}%
+                  </span>
+                </div>
+              ) : null}
               <div className="rounded-lg bg-black/80 px-2 py-1 shadow-xl">
                 <p className="text-xs font-mono font-bold text-white tabular-nums">
                   {formatDuration(hoverTime)}

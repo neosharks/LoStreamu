@@ -1,8 +1,10 @@
 /* Runnable preview-layout tests — `npx tsx tests/preview.test.ts` (no framework).
-   Covers the sprite grid math: tile cap, interval scaling, and aspect-derived
-   tile height (always even for yuv420p). */
+   Covers the frame-sampling math: frame cap, interval scaling, bucket coverage,
+   and aspect-derived tile height (always even for the JPEG encoder). */
 import assert from 'assert';
 import { computePreviewLayout } from '../src/services/preview';
+
+const MAX_FRAMES = 60;
 
 let passed = 0;
 async function test(name: string, fn: () => Promise<void> | void) {
@@ -11,38 +13,35 @@ async function test(name: string, fn: () => Promise<void> | void) {
 }
 
 (async () => {
-  await test('short video (2 min): dense 2s interval, one row', () => {
+  await test('short video (2 min): 2s buckets', () => {
     const m = computePreviewLayout(120, 1920, 1080);
-    assert.equal(m.interval, 2, '2s interval');
-    assert.equal(m.count, 60, '60 tiles');
-    assert.equal(m.cols, 10);
-    assert.equal(m.rows, 6);
+    assert.equal(m.interval, 2);
+    assert.equal(m.count, 60);
     assert.equal(m.tileW, 160);
     assert.equal(m.tileH, 90, '16:9 -> 90');
   });
 
-  await test('long video (1 h): interval scales so tiles stay capped at 100', () => {
-    const m = computePreviewLayout(3600, 1920, 1080);
-    assert.ok(m.count <= 100, `count ${m.count} <= 100`);
-    assert.equal(m.interval, 36, 'ceil(3600/100)=36');
-    assert.equal(m.cols, 10);
+  await test('long video (47 min): frames stay capped, interval scales', () => {
+    const m = computePreviewLayout(2857, 1920, 1080);
+    assert.ok(m.count <= MAX_FRAMES, `count ${m.count} <= ${MAX_FRAMES}`);
+    assert.equal(m.interval, Math.ceil(2857 / MAX_FRAMES), 'interval = ceil(dur/cap)');
   });
 
   await test('portrait video: taller tile, still even', () => {
-    const m = computePreviewLayout(600, 1080, 1920); // 9:16
+    const m = computePreviewLayout(600, 1080, 1920);
     assert.equal(m.tileH % 2, 0, 'tileH even');
     assert.ok(m.tileH > m.tileW, 'portrait taller than wide');
   });
 
   await test('unknown dimensions default to 16:9', () => {
-    const m = computePreviewLayout(600);
-    assert.equal(m.tileH, 90);
+    assert.equal(computePreviewLayout(600).tileH, 90);
   });
 
-  await test('grid always covers the tile count', () => {
-    for (const d of [30, 300, 1234, 7200]) {
+  await test('buckets always cover the whole video, count never exceeds cap', () => {
+    for (const d of [30, 120, 300, 1234, 2857, 7200]) {
       const m = computePreviewLayout(d, 1280, 720);
-      assert.ok(m.cols * m.rows >= m.count, `grid fits count for ${d}s`);
+      assert.ok(m.count <= MAX_FRAMES, `count<=cap for ${d}s`);
+      assert.ok(m.count * m.interval >= d, `buckets cover ${d}s`);
     }
   });
 

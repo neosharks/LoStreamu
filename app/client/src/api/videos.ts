@@ -1,18 +1,21 @@
 import api from './client';
 import type { Video, FolderTree, ServerStats } from '../types';
 
-export interface PreviewMeta {
-  cols: number;
-  rows: number;
+export interface PreviewReady {
+  status: 'ready';
   count: number;
   interval: number;
   tileW: number;
   tileH: number;
-  spriteUrl: string;
+  frameBase: string; // append `${index}.jpg`
 }
+export type PreviewResponse =
+  | PreviewReady
+  | { status: 'generating'; progress: number }
+  | { status: 'error' };
 
 export const previewApi = {
-  get: (id: string) => api.get<PreviewMeta>(`/preview/${id}`).then(r => r.data),
+  get: (id: string) => api.get<PreviewResponse>(`/preview/${id}`).then(r => r.data),
   remove: (id: string) => api.delete(`/preview/${id}`).then(r => r.data).catch(() => {}),
 };
 
