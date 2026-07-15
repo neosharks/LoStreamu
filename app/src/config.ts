@@ -15,7 +15,7 @@ const DEFAULTS: AppConfig = {
   passwordHash: '',
   mediaDir: path.join(APP_DIR, 'media'),
   proxy: '',
-  updateUrl: 'https://raw.githubusercontent.com/thakursat/hosted-video-streamer/main/streamvault-app.tar.gz',
+  updateUrl: 'https://raw.githubusercontent.com/neosharks/LoStreamu/main/streamvault-app.tar.gz',
 };
 
 let _config: AppConfig = { ...DEFAULTS };

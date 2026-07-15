@@ -172,6 +172,18 @@ export function purgeMetaEntry(id: string): void {
   }
 }
 
+// Drop meta-cache entries whose video no longer exists in the library. Call
+// after a fresh rescan() so `validIds` reflects what's actually on disk.
+// Returns the number of stale entries removed.
+export function pruneOrphanMeta(validIds: Set<string>): number {
+  let removed = 0;
+  for (const id of Object.keys(metaCache)) {
+    if (!validIds.has(id)) { delete metaCache[id]; removed++; }
+  }
+  if (removed) saveMetaCache();
+  return removed;
+}
+
 export function safePath(relPath: string): string | null {
   const root = getMediaRoot();
   if (!relPath) return null;

@@ -32,6 +32,15 @@
     -webkit-text-fill-color: transparent;
     background-clip: text;
   }
+  /* Soft radial brand glow — sits behind logos / empty-state icons. */
+  .brand-glow {
+    background: radial-gradient(circle at center, rgba(99, 102, 241, 0.28), transparent 70%);
+  }
+  /* Shimmer skeleton — richer than a flat pulse while content loads. */
+  .skeleton {
+    background: linear-gradient(90deg, #1c2135 0%, #262c44 40%, #1c2135 80%);
+    background-size: 800px 100%;
+  }
   /* Native windowing for large grids: off-screen cards skip layout/render/paint.
      Keeps a 400+ video library smooth to scroll without a virtualization lib.
      contain-intrinsic-size reserves each card's height so the scrollbar is stable. */
@@ -51,4 +60,15 @@
   20%  { opacity: 1; transform: scale(1); }
   70%  { opacity: 1; transform: scale(1); }
   100% { opacity: 0; transform: scale(1.05); }
+}
+
+/* Accessibility: honour the OS "reduce motion" setting — kill decorative
+   animation/transition work for users who ask for it. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
 }

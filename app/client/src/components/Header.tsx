@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { BarChart2, RefreshCw, Settings, LogOut, Plus, Download } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from './ui/button';
+import { Logo } from './Logo';
 import { settingsApi, authApi } from '@/api/settings';
 import { videosApi } from '@/api/videos';
 import { cn } from '@/lib/utils';
@@ -46,14 +47,16 @@ export function Header({ onAddVideos, onStats, videoCount, search, onSearch }: H
   return (
     <header className="glass sticky top-0 z-40 flex h-14 items-center gap-3 border-b border-border px-4">
       {/* Brand */}
-      <div className="flex items-center gap-2.5 shrink-0">
-        <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-accent shadow-lg shadow-accent/30">
-          <svg viewBox="0 0 24 24" fill="white" className="h-4 w-4">
-            <path d="M8 5v14l11-7z" />
-          </svg>
-        </div>
-        <span className="text-sm font-semibold text-text-primary">StreamVault</span>
-      </div>
+      <button
+        onClick={() => navigate('/')}
+        className="group flex items-center gap-2.5 shrink-0 outline-none"
+        title="LoStreamu home"
+      >
+        <span className="drop-shadow-[0_2px_8px_rgba(99,102,241,0.45)] transition-transform duration-200 group-hover:scale-105 group-active:scale-95">
+          <Logo size={28} />
+        </span>
+        <span className="text-sm font-semibold text-gradient">LoStreamu</span>
+      </button>
 
       {/* Search */}
       <div className="relative flex-1">

@@ -1,5 +1,5 @@
 [Unit]
-Description=StreamVault video streaming server
+Description=LoStreamu video streaming server
 After=network-online.target
 Wants=network-online.target
 

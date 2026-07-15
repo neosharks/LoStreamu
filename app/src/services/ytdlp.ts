@@ -51,9 +51,24 @@ export function ytSpeedArgs(): string[] {
 // (it reads duration from metadata first and never downloads the media).
 export const MIN_DURATION_SEC = 600; // 10 minutes
 
-// yt-dlp filter that rejects videos under MIN_DURATION_SEC. A rejected video
-// makes yt-dlp print "does not pass filter" and exit 0 without downloading.
-export function ytFilterArgs(): string[] {
+// True for YouTube URLs (any subdomain, plus youtu.be short links and the
+// privacy-enhanced youtube-nocookie.com host). Malformed URLs → false.
+export function isYouTubeUrl(url: string): boolean {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return /(^|\.)youtube\.com$/.test(host)
+      || /(^|\.)youtube-nocookie\.com$/.test(host)
+      || host === 'youtu.be';
+  } catch {
+    return false;
+  }
+}
+
+// yt-dlp filter that rejects videos under MIN_DURATION_SEC — EXCEPT for
+// YouTube, where a video of any length is allowed. A rejected video makes
+// yt-dlp print "does not pass filter" and exit 0 without downloading.
+export function ytFilterArgs(url: string): string[] {
+  if (isYouTubeUrl(url)) return [];
   return ['--match-filter', `duration >= ${MIN_DURATION_SEC}`];
 }
 

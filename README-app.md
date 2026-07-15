@@ -1,6 +1,6 @@
-# StreamVault — Manual Install
+# LoStreamu — Manual Install
 
-For running StreamVault directly on any Debian/Ubuntu server or macOS without Proxmox.
+For running LoStreamu directly on any Debian/Ubuntu server or macOS without Proxmox.
 
 ## Requirements
 
@@ -21,7 +21,7 @@ For running StreamVault directly on any Debian/Ubuntu server or macOS without Pr
 ## Development (local)
 
 ```bash
-git clone https://github.com/thakursat/hosted-video-streamer.git
+git clone https://github.com/neosharks/LoStreamu.git
 cd hosted-video-streamer/app
 
 # Install server deps
@@ -41,7 +41,7 @@ Open **http://localhost:5173** — the React dev server proxies `/api`, `/stream
 Clone or download the source, then run the installer as root:
 
 ```bash
-git clone https://github.com/thakursat/hosted-video-streamer.git
+git clone https://github.com/neosharks/LoStreamu.git
 cd hosted-video-streamer/app
 bash install-lxc.sh
 ```

@@ -12,16 +12,19 @@ interface VideoCardProps {
   onMove: (video: Video) => void;
   selected?: boolean;
   onToggleSelect?: (video: Video) => void;
+  /** Grid position — drives the staggered entrance animation. */
+  index?: number;
 }
 
-export function VideoCard({ video, onPlay, onRename, onDelete, onMove, selected, onToggleSelect }: VideoCardProps) {
+export function VideoCard({ video, onPlay, onRename, onDelete, onMove, selected, onToggleSelect, index = 0 }: VideoCardProps) {
   const [thumbErr, setThumbErr] = useState(false);
 
   return (
     <div
+      style={{ animationDelay: `${Math.min(index, 14) * 35}ms` }}
       className={cn(
-        'cv-card group relative flex flex-col overflow-hidden rounded-xl border bg-surface transition-all duration-200 hover:shadow-lg hover:shadow-black/20',
-        selected ? 'border-accent ring-2 ring-accent/30' : 'border-border hover:border-accent/40',
+        'cv-card group relative flex flex-col overflow-hidden rounded-xl border bg-surface animate-fade-up transition-all duration-200 hover:-translate-y-1 hover:shadow-xl hover:shadow-accent/10',
+        selected ? 'border-accent ring-2 ring-accent/30' : 'border-border hover:border-accent/50',
       )}
     >
       {/* Thumbnail */}
@@ -33,7 +36,7 @@ export function VideoCard({ video, onPlay, onRename, onDelete, onMove, selected,
           <img
             src={`/thumb/${video.id}`}
             alt={video.name}
-            className="h-full w-full object-cover"
+            className="h-full w-full object-cover transition-transform duration-500 ease-out group-hover:scale-105"
             onError={() => setThumbErr(true)}
             loading="lazy"
             decoding="async"

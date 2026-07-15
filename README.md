@@ -1,4 +1,4 @@
-# StreamVault
+# LoStreamu
 
 A self-hosted, auth-gated video streamer for your homelab — think a lightweight Plex. Sign in, browse your library with thumbnails, click to play in a full-featured player. Add videos by pasting any URL yt-dlp supports (single video or whole playlist), or drop files via the upload tab.
 
@@ -11,7 +11,7 @@ A self-hosted, auth-gated video streamer for your homelab — think a lightweigh
 Run in the **Proxmox VE host shell** (Datacenter → your node → Shell):
 
 ```bash
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/thakursat/hosted-video-streamer/refs/heads/main/streamvault.sh)"
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/neosharks/LoStreamu/refs/heads/main/streamvault.sh)"
 ```
 
 Creates a Debian 12 LXC, installs all dependencies, compiles the TypeScript server, builds the React frontend, and starts the app as a systemd service.
@@ -22,7 +22,7 @@ Override before running:
 
 ```bash
 CT_RAM=4096 CT_DISK=100 CT_HOSTNAME=media \
-  bash -c "$(curl -fsSL https://raw.githubusercontent.com/thakursat/hosted-video-streamer/refs/heads/main/streamvault.sh)"
+  bash -c "$(curl -fsSL https://raw.githubusercontent.com/neosharks/LoStreamu/refs/heads/main/streamvault.sh)"
 ```
 
 Available overrides: `CT_ID` `CT_HOSTNAME` `CT_CPU` `CT_RAM` (MB) `CT_DISK` (GB) `CT_BRIDGE` `CT_NET` (`dhcp` or `192.168.1.50/24`) `CT_GW` `CT_UNPRIVILEGED` `CT_STORAGE` `TEMPLATE_STORAGE`
@@ -69,7 +69,7 @@ Open **Account settings → Update application**. The server downloads the lates
 ### From the Proxmox host
 
 ```bash
-pct exec <CTID> -- bash -c "curl -fsSL https://raw.githubusercontent.com/thakursat/hosted-video-streamer/refs/heads/main/streamvault-app.tar.gz -o /tmp/sv.tar.gz && tar -xzf /tmp/sv.tar.gz -C /opt/streamvault && rm /tmp/sv.tar.gz && bash /opt/streamvault/install-lxc.sh"
+pct exec <CTID> -- bash -c "curl -fsSL https://raw.githubusercontent.com/neosharks/LoStreamu/refs/heads/main/streamvault-app.tar.gz -o /tmp/sv.tar.gz && tar -xzf /tmp/sv.tar.gz -C /opt/streamvault && rm /tmp/sv.tar.gz && bash /opt/streamvault/install-lxc.sh"
 ```
 
 `config.json`, `media/`, `thumbnails/`, `secrets.json`, and `users.json` are preserved.

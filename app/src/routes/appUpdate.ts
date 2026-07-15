@@ -60,7 +60,7 @@ router.get('/app/update/stream', requireAuth, async (req, res) => {
   const clientDir = path.join(APP_DIR, 'client');
   const tarPath = '/tmp/sv-update.tar.gz';
   const updateUrl = getConfig().updateUrl ||
-    'https://raw.githubusercontent.com/thakursat/hosted-video-streamer/main/streamvault-app.tar.gz';
+    'https://raw.githubusercontent.com/neosharks/LoStreamu/main/streamvault-app.tar.gz';
 
   try {
     log(`► Downloading latest release from GitHub...`);

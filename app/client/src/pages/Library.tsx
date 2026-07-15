@@ -6,6 +6,7 @@ import { Film, Search, Move, Trash2, X, Shuffle, FolderOpen, Plus, Download, Set
 import { Header } from '@/components/Header';
 import { Sidebar } from '@/components/Sidebar';
 import { VideoCard } from '@/components/VideoCard';
+import { Button } from '@/components/ui/button';
 import { Player } from '@/components/Player';
 import { AddVideosModal } from '@/components/AddVideosModal';
 import { DownloadsTray } from '@/components/DownloadsTray';
@@ -307,35 +308,45 @@ export function Library() {
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
                 {Array.from({ length: 12 }).map((_, i) => (
                   <div key={i} className="overflow-hidden rounded-xl border border-border bg-surface">
-                    <div className="aspect-video animate-pulse bg-elevated" />
+                    <div className="skeleton aspect-video animate-shimmer" />
                     <div className="space-y-2 p-3">
-                      <div className="h-3.5 animate-pulse rounded bg-elevated" />
-                      <div className="h-2.5 w-1/2 animate-pulse rounded bg-elevated" />
+                      <div className="skeleton h-3.5 animate-shimmer rounded" />
+                      <div className="skeleton h-2.5 w-1/2 animate-shimmer rounded" />
                     </div>
                   </div>
                 ))}
               </div>
             ) : filtered.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-24 text-center">
+              <div className="flex animate-pop-in flex-col items-center justify-center py-24 text-center">
+                <div className="relative mb-5 flex h-20 w-20 items-center justify-center">
+                  <span className="brand-glow absolute inset-0 animate-glow-pulse rounded-full blur-lg" />
+                  <div className="relative flex h-16 w-16 items-center justify-center rounded-2xl border border-border bg-surface">
+                    {search
+                      ? <Search className="h-8 w-8 text-accent-hover" />
+                      : <Film className="h-8 w-8 text-accent-hover" />}
+                  </div>
+                </div>
                 {search ? (
                   <>
-                    <Search className="mb-3 h-10 w-10 text-text-subtle" />
-                    <p className="text-sm font-medium text-text-primary">No results for "{search}"</p>
-                    <p className="mt-1 text-xs text-text-muted">Try a different search term</p>
+                    <p className="text-base font-semibold text-text-primary">No results for "{search}"</p>
+                    <p className="mt-1 text-sm text-text-muted">Try a different search term</p>
                   </>
                 ) : (
                   <>
-                    <Film className="mb-3 h-10 w-10 text-text-subtle" />
-                    <p className="text-sm font-medium text-text-primary">No videos here</p>
-                    <p className="mt-1 text-xs text-text-muted">Add videos using the button above</p>
+                    <p className="text-base font-semibold text-text-primary">Your library is empty</p>
+                    <p className="mt-1 text-sm text-text-muted">Paste a link and LoStreamu pulls it in for offline viewing.</p>
+                    <Button className="mt-5" onClick={() => setShowAdd(true)}>
+                      <Plus className="h-4 w-4" /> Add your first video
+                    </Button>
                   </>
                 )}
               </div>
             ) : (
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
-                {filtered.map(video => (
+                {filtered.map((video, i) => (
                   <VideoCard
                     key={video.id}
+                    index={i}
                     video={video}
                     onPlay={handlePlay}
                     onRename={v => setRenameVideo(v)}

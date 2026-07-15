@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 
-# StreamVault v2 — Proxmox VE LXC installer
+# LoStreamu v2 — Proxmox VE LXC installer
 #
-# Creates a Debian 12 LXC, downloads the StreamVault app archive, and
+# Creates a Debian 12 LXC, downloads the LoStreamu app archive, and
 # runs install-lxc.sh inside the container.  All installer output streams
 # live to your terminal.
 #
 # Usage (run on the Proxmox VE host as root):
-#   bash -c "$(curl -fsSL https://raw.githubusercontent.com/thakursat/hosted-video-streamer/refs/heads/main/streamvault.sh)"
+#   bash -c "$(curl -fsSL https://raw.githubusercontent.com/neosharks/LoStreamu/refs/heads/main/streamvault.sh)"
 #
 # Defaults: 2 vCPU · 8 GB RAM · 200 GB disk · unprivileged · DHCP
 # Override any default:
@@ -17,7 +17,7 @@ set -euo pipefail
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-REPO_RAW="${REPO_RAW:-https://raw.githubusercontent.com/thakursat/hosted-video-streamer/refs/heads/main}"
+REPO_RAW="${REPO_RAW:-https://raw.githubusercontent.com/neosharks/LoStreamu/refs/heads/main}"
 APP_ARCHIVE_URL="${APP_ARCHIVE_URL:-$REPO_RAW/streamvault-app.tar.gz}"
 APP_PORT="8080"
 
@@ -136,7 +136,7 @@ pct create "$CT_ID" "$TEMPLATE_REF" \
   --unprivileged "$CT_UNPRIVILEGED" \
   --features   nesting=1 \
   --onboot     1 \
-  --description "StreamVault v2 — TypeScript + React" \
+  --description "LoStreamu v2 — TypeScript + React" \
   || die "pct create failed — check storage space and template path."
 msg_ok "Container created"
 
@@ -168,7 +168,7 @@ msg_ok "Bootstrap packages installed"
 # ── Download app archive ──────────────────────────────────────────────────────
 
 echo
-msg_info "Downloading StreamVault app archive..."
+msg_info "Downloading LoStreamu app archive..."
 msg_detail "Source: $APP_ARCHIVE_URL"
 pct exec "$CT_ID" -- bash -c \
   "curl -fL --retry 3 --retry-delay 5 --progress-bar '${APP_ARCHIVE_URL}' -o /tmp/sv.tar.gz" \
@@ -217,7 +217,7 @@ echo
 
 # ── Start the service ─────────────────────────────────────────────────────────
 
-msg_info "Starting StreamVault service..."
+msg_info "Starting LoStreamu service..."
 pct exec "$CT_ID" -- systemctl start streamvault \
   || {
     msg_err "Service failed to start!"
@@ -228,7 +228,7 @@ pct exec "$CT_ID" -- systemctl start streamvault \
 
 sleep 2
 if pct exec "$CT_ID" -- systemctl is-active --quiet streamvault 2>/dev/null; then
-  msg_ok "StreamVault service is running"
+  msg_ok "LoStreamu service is running"
 else
   pct exec "$CT_ID" -- bash -c "journalctl -u streamvault -n 20 --no-pager 2>/dev/null" | sed 's/^/   /'
   die "Service started but is not active — check the logs above."
@@ -248,7 +248,7 @@ done
 echo
 echo -e "${GN}"
 echo "  ╔════════════════════════════════════════════════════════════╗"
-echo "  ║          StreamVault v2  —  Installation complete  ✓      ║"
+echo "  ║          LoStreamu v2  —  Installation complete  ✓      ║"
 echo "  ╠════════════════════════════════════════════════════════════╣"
 printf "  ║  Container : LXC %-41s║\n" "${CT_ID} (${CT_HOSTNAME})"
 printf "  ║  IP address: %-44s║\n" "${IP:-<check pct exec ${CT_ID} -- hostname -I>}"

@@ -101,7 +101,7 @@ async function runBatch(b: BatchJob): Promise<void> {
         '--download-archive', b.archive,
         ...ytNetArgs(),
         ...ytSpeedArgs(),
-        ...ytFilterArgs(),  // skip videos shorter than 10 minutes
+        ...ytFilterArgs(isDirectUrl ? item.url! : b.url),  // skip < 10 min (YouTube exempt: any length)
         isDirectUrl ? '--no-playlist' : '--yes-playlist',
         ...(isDirectUrl ? [] : ['--playlist-items', String(item.index)]),
         '-f', 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best',

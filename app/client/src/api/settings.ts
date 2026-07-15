@@ -7,6 +7,23 @@ export interface AppVersion {
   updateAvailable: boolean;
 }
 
+export interface CleanupResult {
+  ok: boolean;
+  removedFiles: number;
+  freedBytes: number;
+  thumbnails: { removedFiles: number; freedBytes: number };
+  tempFiles: { removedFiles: number; freedBytes: number };
+  metaEntries: number;
+}
+
+export interface RegenResult {
+  ok: boolean;
+  total: number;
+  generated: number;
+  skipped: number;
+  failed: number;
+}
+
 export const settingsApi = {
   getProxy: () => api.get<{ proxy: string }>('/settings').then(r => r.data),
   setProxy: (proxy: string) => api.post('/settings', { proxy }).then(r => r.data),
@@ -14,6 +31,9 @@ export const settingsApi = {
   ytdlpVersion: () => api.get<YtDlpVersion>('/ytdlp/version').then(r => r.data),
   ytdlpUpdate: () => api.post<{ ok: boolean; version: string }>('/ytdlp/update').then(r => r.data),
   appUpdateUrl: () => `${api.defaults.baseURL}/app/update/stream`,
+  cleanJunk: () => api.post<CleanupResult>('/maintenance/clean').then(r => r.data),
+  regenerateThumbnails: () =>
+    api.post<RegenResult>('/maintenance/thumbnails').then(r => r.data),
 };
 
 export const authApi = {

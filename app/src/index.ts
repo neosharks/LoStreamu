@@ -125,7 +125,7 @@ if (fs.existsSync(clientDist)) {
   app.get('*', (_req, res) => res.sendFile(path.join(clientDist, 'index.html')));
 } else {
   app.get('/', (_req, res) => res.json({
-    status: 'StreamVault API running — start the client: cd client && npm run dev',
+    status: 'LoStreamu API running — start the client: cd client && npm run dev',
   }));
 }
 
@@ -133,7 +133,7 @@ app.use(errorHandler);
 
 const PORT = Number(process.env.PORT || config.port || 8080);
 app.listen(PORT, () => {
-  console.log(`StreamVault running on http://0.0.0.0:${PORT}`);
+  console.log(`LoStreamu running on http://0.0.0.0:${PORT}`);
   console.log(`Media dir: ${config.mediaDir}`);
   rescan();
   // Defer CPU work so the server can answer requests immediately on boot instead

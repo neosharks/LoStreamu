@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
-import { Loader2, Play } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Logo } from '@/components/Logo';
 import { authApi } from '@/api/settings';
 
 type Mode = 'loading' | 'login' | 'setup';
@@ -54,16 +55,17 @@ export function Login() {
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-bg px-4">
       <div className="pointer-events-none fixed inset-0 overflow-hidden">
-        <div className="absolute -top-40 left-1/2 h-96 w-96 -translate-x-1/2 rounded-full bg-accent/5 blur-3xl" />
+        <div className="absolute -top-40 left-1/2 h-96 w-96 -translate-x-1/2 animate-float rounded-full bg-accent/10 blur-3xl" />
+        <div className="absolute -bottom-40 right-0 h-80 w-80 animate-float rounded-full bg-accent-hover/5 blur-3xl [animation-delay:1.5s]" />
       </div>
 
-      <div className="relative w-full max-w-sm">
+      <div className="relative w-full max-w-sm animate-fade-up">
         <div className="mb-8 flex flex-col items-center gap-3">
-          <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-accent shadow-xl shadow-accent/30">
-            <Play className="h-7 w-7 text-white" fill="white" />
-          </div>
+          <span className="drop-shadow-[0_6px_20px_rgba(99,102,241,0.5)]">
+            <Logo size={60} animated />
+          </span>
           <div className="text-center">
-            <h1 className="text-2xl font-bold text-text-primary">StreamVault</h1>
+            <h1 className="text-3xl font-bold text-gradient">LoStreamu</h1>
             <p className="mt-1 text-sm text-text-muted">
               {mode === 'setup' ? 'Create your admin account to get started' : 'Sign in to your library'}
             </p>
@@ -122,7 +124,7 @@ export function Login() {
         </form>
 
         <p className="mt-4 text-center text-xs text-text-subtle">
-          StreamVault — self-hosted video streaming
+          LoStreamu — self-hosted video streaming
         </p>
       </div>
     </div>

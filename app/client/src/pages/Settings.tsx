@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   ChevronLeft, User, Users, Wifi, Package, RefreshCw, LogOut,
-  Loader2, Trash2, UserPlus, BarChart2,
+  Loader2, Trash2, UserPlus, BarChart2, Sparkles, Image as ImageIcon, Wrench,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -12,6 +12,13 @@ import { authApi, settingsApi, usersApi } from '@/api/settings';
 import { videosApi } from '@/api/videos';
 import { AppUpdateModal } from '@/components/AppUpdateModal';
 import { StatsModal } from '@/components/StatsModal';
+
+function formatBytes(n: number): string {
+  if (!n) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.min(units.length - 1, Math.floor(Math.log(n) / Math.log(1024)));
+  return `${(n / 1024 ** i).toFixed(i ? 1 : 0)} ${units[i]}`;
+}
 
 export function Settings() {
   const navigate = useNavigate();
@@ -87,6 +94,33 @@ export function Settings() {
       qc.invalidateQueries({ queryKey: ['videos'] });
       qc.invalidateQueries({ queryKey: ['tree'] });
     },
+  });
+
+  const cleanMutation = useMutation({
+    mutationFn: settingsApi.cleanJunk,
+    onSuccess: (r) => {
+      toast.success(
+        r.removedFiles
+          ? `Cleaned ${r.removedFiles} file${r.removedFiles === 1 ? '' : 's'} · freed ${formatBytes(r.freedBytes)}`
+          : 'Already clean — nothing to remove',
+      );
+      qc.invalidateQueries({ queryKey: ['videos'] });
+      qc.invalidateQueries({ queryKey: ['tree'] });
+    },
+    onError: (err: any) => toast.error(err.response?.data?.error || 'Cleanup failed'),
+  });
+
+  const regenMutation = useMutation({
+    mutationFn: settingsApi.regenerateThumbnails,
+    onSuccess: (r) => {
+      const parts = [`${r.generated} generated`];
+      if (r.skipped) parts.push(`${r.skipped} already ok`);
+      if (r.failed) parts.push(`${r.failed} failed`);
+      const msg = `Thumbnails: ${parts.join(' · ')} (of ${r.total})`;
+      r.failed ? toast.warning(msg) : toast.success(msg);
+      qc.invalidateQueries({ queryKey: ['videos'] });
+    },
+    onError: (err: any) => toast.error(err.response?.data?.error || 'Thumbnail regeneration failed'),
   });
 
   const logoutMutation = useMutation({
@@ -246,6 +280,52 @@ export function Settings() {
                 </div>
               </div>
             </section>
+
+            {/* ── Maintenance (admin) ─────────────────────────────────── */}
+            {me?.isAdmin && (
+              <section className="overflow-hidden rounded-2xl border border-border bg-surface">
+                <div className="flex items-center gap-2.5 border-b border-border px-5 py-4">
+                  <Wrench className="h-4 w-4 text-text-muted" />
+                  <h2 className="text-sm font-semibold text-text-primary">Maintenance</h2>
+                </div>
+                <div className="space-y-4 p-5">
+                  <div className="space-y-2">
+                    <p className="text-xs text-text-muted">
+                      Remove orphaned thumbnails, leftover download temp files and stale cache
+                      entries. Your videos are never touched.
+                    </p>
+                    <Button
+                      variant="secondary"
+                      className="w-full"
+                      onClick={() => cleanMutation.mutate()}
+                      disabled={cleanMutation.isPending}
+                    >
+                      {cleanMutation.isPending
+                        ? <Loader2 className="h-4 w-4 animate-spin" />
+                        : <Sparkles className="h-4 w-4" />}
+                      Clean junk files
+                    </Button>
+                  </div>
+                  <div className="space-y-2 border-t border-border pt-4">
+                    <p className="text-xs text-text-muted">
+                      Rebuild any missing or failed video thumbnails. Safe to run anytime — existing
+                      thumbnails are kept. May take a while on large libraries.
+                    </p>
+                    <Button
+                      variant="secondary"
+                      className="w-full"
+                      onClick={() => regenMutation.mutate()}
+                      disabled={regenMutation.isPending}
+                    >
+                      {regenMutation.isPending
+                        ? <Loader2 className="h-4 w-4 animate-spin" />
+                        : <ImageIcon className="h-4 w-4" />}
+                      Regenerate thumbnails
+                    </Button>
+                  </div>
+                </div>
+              </section>
+            )}
 
             {/* ── Application (admin) ─────────────────────────────────── */}
             {me?.isAdmin && (

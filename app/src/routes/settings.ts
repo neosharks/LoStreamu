@@ -5,6 +5,7 @@ import path from 'path';
 import { requireAuth } from '../middleware/auth';
 import { getConfig, saveConfig, APP_DIR } from '../config';
 import { getYtDlpVersion, updateYtDlp } from '../services/ytdlp';
+import { cleanJunk, regenerateThumbnails } from '../services/maintenance';
 
 const router = Router();
 
@@ -41,7 +42,7 @@ router.get('/app/version', requireAuth, async (_req, res) => {
   if (!_appLatestCache.version || now - _appLatestCache.at > APP_VERSION_TTL) {
     try {
       const r = await fetch(
-        'https://raw.githubusercontent.com/thakursat/hosted-video-streamer/main/app/package.json',
+        'https://raw.githubusercontent.com/neosharks/LoStreamu/main/app/package.json',
         { headers: { 'User-Agent': 'streamvault/2' } },
       );
       const data = await r.json() as { version?: string };
@@ -67,6 +68,28 @@ router.post('/ytdlp/update', requireAuth, async (_req, res) => {
     await updateYtDlp();
     const info = await getYtDlpVersion();
     res.json({ ok: true, version: info.current });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Maintenance ────────────────────────────────────────────────────────────
+// Delete orphaned thumbnails, yt-dlp temp/partial leftovers, stale meta-cache
+// entries and empty folders. Real videos are never touched.
+router.post('/maintenance/clean', requireAuth, (_req, res) => {
+  try {
+    res.json({ ok: true, ...cleanJunk() });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Re-run thumbnail generation for videos missing a valid thumbnail (or all when
+// ?force=1). Can take a while on large libraries; ffmpeg fan-out is bounded.
+router.post('/maintenance/thumbnails', requireAuth, async (req, res) => {
+  try {
+    const force = req.query.force === '1';
+    res.json({ ok: true, ...(await regenerateThumbnails(force)) });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

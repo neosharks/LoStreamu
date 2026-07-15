@@ -29,7 +29,7 @@ export class YtDlpEngine implements DownloadEngine {
         '--download-archive', archivePath,
         ...ytNetArgs(),
         ...ytSpeedArgs(),
-        ...ytFilterArgs(),                 // skip < 10 min
+        ...ytFilterArgs(item.url),         // skip < 10 min (YouTube exempt: any length)
         '--no-playlist',
         '-f', 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best',
         '--merge-output-format', 'mp4',

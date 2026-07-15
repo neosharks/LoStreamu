@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# StreamVault v2 — installer for Debian 12 LXC (run as root inside the container).
+# LoStreamu v2 — installer for Debian 12 LXC (run as root inside the container).
 #
 # Can also be re-run to upgrade an existing install.
 # Files already in /opt/streamvault are upgraded in-place; config.json and
@@ -55,7 +55,7 @@ exec > >(tee -a "$LOG_FILE") 2>&1
 
 echo
 echo "╔══════════════════════════════════════════════════╗"
-echo "║   StreamVault v2  ·  Installer / Upgrader       ║"
+echo "║   LoStreamu v2  ·  Installer / Upgrader       ║"
 echo "╚══════════════════════════════════════════════════╝"
 echo "  Date  : $(date)"
 echo "  Host  : $(hostname)"
@@ -290,7 +290,7 @@ else
   # Write inline if the file wasn't packed in the archive (shouldn't happen).
   cat >"$SVC_FILE" <<UNIT
 [Unit]
-Description=StreamVault video streaming server
+Description=LoStreamu video streaming server
 After=network-online.target
 Wants=network-online.target
 
@@ -318,7 +318,7 @@ ok "streamvault.service enabled"
 
 # Restart if already running (upgrade path).
 if systemctl is-active --quiet streamvault 2>/dev/null; then
-  step "Restarting running StreamVault service (upgrade)..."
+  step "Restarting running LoStreamu service (upgrade)..."
   systemctl restart streamvault
   sleep 2
   if systemctl is-active --quiet streamvault; then
@@ -339,7 +339,7 @@ ELAPSED=$SECONDS
 echo
 echo -e "${BOLD}${GREEN}"
 echo "  ╔═══════════════════════════════════════════════════╗"
-echo "  ║       StreamVault v2  —  Install complete  ✓     ║"
+echo "  ║       LoStreamu v2  —  Install complete  ✓     ║"
 echo "  ╠═══════════════════════════════════════════════════╣"
 printf "  ║  Time   : %-40s║\n" "${ELAPSED}s"
 printf "  ║  App dir: %-40s║\n" "$APP_DIR"

@@ -20,4 +20,4 @@ git add \
   "$APP_DIR/package-lock.json" \
   "$REPO_ROOT/streamvault-app.tar.gz"
 
-echo "▶ StreamVault bumped to v${NEW_VERSION} — archive rebuilt"
+echo "▶ LoStreamu bumped to v${NEW_VERSION} — archive rebuilt"
