@@ -1,8 +1,16 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { Play, MoreVertical, Pencil, Trash2, Move, Download, Check } from 'lucide-react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { formatBytes, formatDuration, cn } from '@/lib/utils';
 import type { Video } from '@/types';
+
+// Touch devices have no hover, so the selection checkbox must be visible up-front
+// and long-press must be able to enter select mode.
+const IS_TOUCH =
+  typeof window !== 'undefined' &&
+  window.matchMedia('(hover: none) and (pointer: coarse)').matches;
+
+const LONG_PRESS_MS = 450;
 
 interface VideoCardProps {
   video: Video;
@@ -12,12 +20,35 @@ interface VideoCardProps {
   onMove: (video: Video) => void;
   selected?: boolean;
   onToggleSelect?: (video: Video) => void;
+  /** True when the library is in bulk-select mode — a tap toggles instead of plays. */
+  selectionMode?: boolean;
   /** Grid position — drives the staggered entrance animation. */
   index?: number;
 }
 
-export function VideoCard({ video, onPlay, onRename, onDelete, onMove, selected, onToggleSelect, index = 0 }: VideoCardProps) {
+export function VideoCard({ video, onPlay, onRename, onDelete, onMove, selected, onToggleSelect, selectionMode, index = 0 }: VideoCardProps) {
   const [thumbErr, setThumbErr] = useState(false);
+  // Set true when a long-press fires so the click it precedes doesn't also play.
+  const longPressed = useRef(false);
+  const pressTimer = useRef<ReturnType<typeof setTimeout>>();
+
+  const startPress = () => {
+    if (!onToggleSelect) return;
+    longPressed.current = false;
+    pressTimer.current = setTimeout(() => {
+      longPressed.current = true;
+      onToggleSelect(video); // enter select mode + select this card
+    }, LONG_PRESS_MS);
+  };
+  const cancelPress = () => clearTimeout(pressTimer.current);
+
+  const onThumbClick = () => {
+    if (longPressed.current) { longPressed.current = false; return; } // consumed by long-press
+    if (selectionMode && onToggleSelect) onToggleSelect(video);
+    else onPlay(video);
+  };
+
+  const showCheckbox = !!onToggleSelect && (selected || selectionMode || IS_TOUCH);
 
   return (
     <div
@@ -30,7 +61,11 @@ export function VideoCard({ video, onPlay, onRename, onDelete, onMove, selected,
       {/* Thumbnail */}
       <div
         className="relative aspect-video cursor-pointer overflow-hidden bg-elevated"
-        onClick={() => onPlay(video)}
+        onClick={onThumbClick}
+        onPointerDown={startPress}
+        onPointerUp={cancelPress}
+        onPointerMove={cancelPress}
+        onPointerLeave={cancelPress}
       >
         {!thumbErr ? (
           <img
@@ -54,18 +89,20 @@ export function VideoCard({ video, onPlay, onRename, onDelete, onMove, selected,
           </div>
         </div>
 
-        {/* Selection checkbox (top-left) */}
+        {/* Selection checkbox (top-left) — bigger tap target on touch */}
         {onToggleSelect && (
           <button
             onClick={e => { e.stopPropagation(); onToggleSelect(video); }}
             className={cn(
-              'absolute left-2 top-2 flex h-5 w-5 items-center justify-center rounded-md border-2 transition-all',
+              'absolute left-2 top-2 flex items-center justify-center rounded-md border-2 transition-all',
+              IS_TOUCH ? 'h-6 w-6' : 'h-5 w-5',
               selected
                 ? 'border-accent bg-accent text-white opacity-100'
-                : 'border-white/70 bg-black/30 text-transparent opacity-0 group-hover:opacity-100',
+                : 'border-white/70 bg-black/40 text-transparent',
+              showCheckbox ? 'opacity-100' : 'opacity-0 group-hover:opacity-100',
             )}
           >
-            {selected && <Check className="h-3 w-3" strokeWidth={3} />}
+            {selected && <Check className="h-3.5 w-3.5" strokeWidth={3} />}
           </button>
         )}
 

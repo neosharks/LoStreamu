@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Film, Search, Move, Trash2, X, Shuffle, FolderOpen, Plus, Download, Settings } from 'lucide-react';
+import { Film, Search, Move, Trash2, X, Shuffle, FolderOpen, Plus, Download, Settings, ListChecks } from 'lucide-react';
 import { Header } from '@/components/Header';
 import { Sidebar } from '@/components/Sidebar';
 import { VideoCard } from '@/components/VideoCard';
@@ -147,6 +147,12 @@ export function Library() {
       return next;
     });
 
+  // Select-all operates on the CURRENT view (folder + search), so it works the
+  // same inside a folder as it does across the whole library.
+  const allSelected = filtered.length > 0 && filtered.every(v => selectedIds.has(v.id));
+  const toggleSelectAll = () =>
+    setSelectedIds(allSelected ? new Set() : new Set(filtered.map(v => v.id)));
+
   const handlePlay = (video: Video) => openPlayer(video, filtered);
 
   // ── Player ↔ URL sync ──────────────────────────────────────────────────────
@@ -241,6 +247,21 @@ export function Library() {
                 <h2 className="text-sm font-semibold text-text-primary">
                   {folder || 'All videos'} · {filtered.length}
                 </h2>
+                {filtered.length > 0 && (
+                  <button
+                    onClick={toggleSelectAll}
+                    className={cn(
+                      'flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-medium transition-colors',
+                      allSelected
+                        ? 'border-accent/40 bg-accent-light text-accent-hover'
+                        : 'border-border bg-elevated text-text-muted hover:bg-border hover:text-text-primary',
+                    )}
+                    title={allSelected ? 'Deselect all' : 'Select all in this view'}
+                  >
+                    <ListChecks className="h-3.5 w-3.5" />
+                    {allSelected ? 'Deselect all' : 'Select all'}
+                  </button>
+                )}
               </div>
               <div className="flex items-center gap-1.5">
                 <label className="text-xs text-text-muted">Sort</label>
@@ -279,6 +300,12 @@ export function Library() {
                 <span className="flex-1 text-sm font-medium text-accent-hover">
                   {selectedIds.size} selected
                 </span>
+                <button
+                  onClick={toggleSelectAll}
+                  className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium text-text-primary hover:bg-elevated"
+                >
+                  <ListChecks className="h-3.5 w-3.5" /> {allSelected ? 'Deselect all' : 'Select all'}
+                </button>
                 <button
                   onClick={() => setMoveVideos(filtered.filter(v => selectedIds.has(v.id)))}
                   className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium text-text-primary hover:bg-elevated"
@@ -351,6 +378,7 @@ export function Library() {
                     onMove={v => setMoveVideos([v])}
                     selected={selectedIds.has(video.id)}
                     onToggleSelect={toggleSelect}
+                    selectionMode={isSelecting}
                   />
                 ))}
               </div>

@@ -1,17 +1,25 @@
 import api from './client';
 import type { Video, FolderTree, ServerStats } from '../types';
 
-export interface PreviewReady {
-  status: 'ready';
+export interface PreviewMeta {
   count: number;
   interval: number;
   tileW: number;
   tileH: number;
   frameBase: string; // append `${index}.jpg`
 }
+export interface PreviewReady extends PreviewMeta {
+  status: 'ready';
+}
+// While generating we now also return the layout + frameBase so the client can
+// show frames the instant each one lands on disk (progressive), not all-or-nothing.
+export interface PreviewGenerating extends PreviewMeta {
+  status: 'generating';
+  progress: number;
+}
 export type PreviewResponse =
   | PreviewReady
-  | { status: 'generating'; progress: number }
+  | PreviewGenerating
   | { status: 'error' };
 
 export const previewApi = {

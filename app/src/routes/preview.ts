@@ -12,10 +12,12 @@ router.get('/preview/:id', requireAuth, (req, res) => {
   const v = findById(req.params['id'] as string);
   if (!v) { res.status(404).json({ error: 'Not found' }); return; }
   const st = requestPreview(v);
+  const frameBase = `/api/preview/${v.id}/frame/`;
   if (st.status === 'ready') {
-    res.json({ status: 'ready', ...st.meta, frameBase: `/api/preview/${v.id}/frame/` });
+    res.json({ status: 'ready', ...st.meta, frameBase });
   } else if (st.status === 'generating') {
-    res.json({ status: 'generating', progress: st.progress });
+    // Ship the layout + frameBase now so the client shows frames as they land.
+    res.json({ status: 'generating', progress: st.progress, ...st.meta, frameBase });
   } else {
     res.status(500).json({ status: 'error' });
   }

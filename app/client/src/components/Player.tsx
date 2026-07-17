@@ -7,7 +7,7 @@ import {
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { usePlayerStore } from '@/stores/playerStore';
-import { videosApi, previewApi, type PreviewReady } from '@/api/videos';
+import { videosApi, previewApi, type PreviewMeta } from '@/api/videos';
 import { formatDuration, cn } from '@/lib/utils';
 
 const SEEK_STEP = 10;
@@ -49,9 +49,12 @@ export function Player() {
   const [buffering, setBuffering] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const [preview, setPreview] = useState<PreviewReady | null>(null);
+  // `previewMeta` (layout + frameBase) is kept as soon as the server reports it —
+  // even mid-generation — so hovering shows each frame the instant it lands.
+  const [previewMeta, setPreviewMeta] = useState<PreviewMeta | null>(null);
   const [previewStatus, setPreviewStatus] = useState<'generating' | 'ready' | 'error'>('generating');
   const [previewProgress, setPreviewProgress] = useState(0);
+  const [frameLoaded, setFrameLoaded] = useState(false);
 
   const idx = video && playlist.length ? playlist.findIndex(v => v.id === video.id) : -1;
   const hasPrev = idx > 0;
@@ -192,7 +195,7 @@ export function Player() {
     let active = true;
     let timer: ReturnType<typeof setTimeout>;
 
-    setPreview(null);
+    setPreviewMeta(null);
     setPreviewStatus('generating');
     setPreviewProgress(0);
 
@@ -200,9 +203,15 @@ export function Player() {
       try {
         const r = await previewApi.get(id);
         if (!active) return;
-        if (r.status === 'ready') { setPreview(r); setPreviewStatus('ready'); }
-        else if (r.status === 'generating') { setPreviewProgress(r.progress); timer = setTimeout(poll, 1200); }
-        else setPreviewStatus('error');
+        if (r.status === 'ready') {
+          setPreviewMeta(r);
+          setPreviewStatus('ready');
+        } else if (r.status === 'generating') {
+          // Show frames progressively: store the layout now, keep polling for done.
+          setPreviewMeta({ count: r.count, interval: r.interval, tileW: r.tileW, tileH: r.tileH, frameBase: r.frameBase });
+          setPreviewProgress(r.progress);
+          timer = setTimeout(poll, 800);
+        } else setPreviewStatus('error');
       } catch { if (active) setPreviewStatus('error'); }
     };
     poll();
@@ -216,12 +225,12 @@ export function Player() {
 
   // Warm the browser cache once frames are ready so hovering is instant.
   useEffect(() => {
-    if (previewStatus !== 'ready' || !preview) return;
-    for (let i = 0; i < preview.count; i++) {
+    if (previewStatus !== 'ready' || !previewMeta) return;
+    for (let i = 0; i < previewMeta.count; i++) {
       const img = new Image();
-      img.src = `${preview.frameBase}${i}.jpg`;
+      img.src = `${previewMeta.frameBase}${i}.jpg`;
     }
-  }, [previewStatus, preview]);
+  }, [previewStatus, previewMeta]);
 
   // ── Actions ───────────────────────────────────────────────────────────────────
   const togglePlay = useCallback(() => {
@@ -395,11 +404,16 @@ export function Player() {
 
   // Preview frame for the hovered timestamp.
   const previewFrame = (() => {
-    if (!preview || seekHoverX === null || !duration) return null;
-    const i = Math.min(preview.count - 1, Math.max(0, Math.floor(hoverTime / preview.interval)));
-    return { src: `${preview.frameBase}${i}.jpg`, width: preview.tileW, height: preview.tileH };
+    if (!previewMeta || seekHoverX === null || !duration) return null;
+    const i = Math.min(previewMeta.count - 1, Math.max(0, Math.floor(hoverTime / previewMeta.interval)));
+    return { src: `${previewMeta.frameBase}${i}.jpg`, width: previewMeta.tileW, height: previewMeta.tileH };
   })();
-  const previewW = preview?.tileW ?? 160;
+  const previewW = previewMeta?.tileW ?? 320;
+  const previewH = previewMeta?.tileH ?? Math.round(previewW * 9 / 16);
+
+  // Reset the load flag whenever the hovered frame changes so a not-yet-generated
+  // frame falls back to the spinner instead of showing a stale image.
+  useEffect(() => { setFrameLoaded(false); }, [previewFrame?.src]);
 
   const VolumeIcon = muted || volume === 0 ? VolumeX : volume < 0.5 ? Volume1 : Volume2;
 
@@ -615,30 +629,43 @@ export function Player() {
             <div
               className="absolute bottom-full mb-2 pointer-events-none flex flex-col items-center gap-1"
               style={{
-                left: `clamp(${previewW / 2 + 8}px, ${seekHoverX * 100}%, calc(100% - ${previewW / 2 + 8}px))`,
+                // Pad tracks the ACTUAL displayed width (min of tile px and 45vw)
+                // so the tooltip never clips off-screen on mobile.
+                left: `clamp(calc(min(${previewW}px, 45vw) / 2 + 8px), ${seekHoverX * 100}%, calc(100% - min(${previewW}px, 45vw) / 2 - 8px))`,
                 transform: 'translateX(-50%)',
               }}
             >
-              {previewStatus === 'ready' && previewFrame ? (
+              {/* Frame is always mounted (even while hidden) so onLoad can fire and
+                  reveal it the moment it lands. During generation a not-yet-ready
+                  frame stays hidden and the spinner shows instead. */}
+              {previewFrame && (
                 <img
+                  key={`${previewStatus}-${previewFrame.src}`}
                   src={previewFrame.src}
-                  width={previewFrame.width}
-                  height={previewFrame.height}
                   alt=""
                   draggable={false}
-                  className="rounded-lg border border-white/20 bg-black object-cover shadow-2xl"
+                  onLoad={() => setFrameLoaded(true)}
+                  onError={() => setFrameLoaded(false)}
+                  style={{
+                    width: previewW,
+                    maxWidth: '45vw',
+                    height: 'auto',
+                    display: previewStatus === 'ready' || frameLoaded ? 'block' : 'none',
+                  }}
+                  className="rounded-lg border border-white/20 bg-black shadow-2xl"
                 />
-              ) : previewStatus === 'generating' ? (
+              )}
+              {previewStatus === 'generating' && (!previewFrame || !frameLoaded) && (
                 <div
                   className="flex flex-col items-center justify-center gap-1 rounded-lg border border-white/15 bg-black/85 shadow-2xl"
-                  style={{ width: previewW, height: Math.round(previewW * 9 / 16) }}
+                  style={{ width: previewW, maxWidth: '45vw', aspectRatio: `${previewW} / ${previewH}` }}
                 >
                   <Loader2 className="h-4 w-4 animate-spin text-white/80" />
                   <span className="text-[10px] font-medium text-white/70">
-                    Generating preview… {Math.round(previewProgress * 100)}%
+                    Generating… {Math.round(previewProgress * 100)}%
                   </span>
                 </div>
-              ) : null}
+              )}
               <div className="rounded-lg bg-black/80 px-2 py-1 shadow-xl">
                 <p className="text-xs font-mono font-bold text-white tabular-nums">
                   {formatDuration(hoverTime)}

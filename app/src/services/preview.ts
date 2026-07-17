@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { APP_DIR } from '../config';
-import { runMedia } from './exec';
+import { runMedia, createLimiter, PREVIEW_CONCURRENCY } from './exec';
 import type { VideoItem } from '../types';
 
 // ── Ephemeral scrub-preview frames ────────────────────────────────────────────
@@ -20,9 +20,14 @@ import type { VideoItem } from '../types';
 // boot, and swept when idle — nothing accumulates on disk.
 
 const PREVIEW_DIR = path.join(APP_DIR, 'previews');
-const MAX_FRAMES = 60;   // cap frames regardless of length (bounds ffmpeg spawns)
-const TILE_W = 160;      // px per frame; height derived from the video's aspect
+const MAX_FRAMES = 40;   // cap frames regardless of length (bounds ffmpeg spawns)
+const TILE_W = 320;      // px per frame; height derived from the video's aspect
 const IDLE_MS = 15 * 60 * 1000;
+
+// Frame extraction runs on its own small pool so a video's previews never hog
+// every core while that video is streaming. Each frame still goes through
+// runMedia (the global media cap), so previews are bounded by whichever is smaller.
+const previewLimiter = createLimiter(PREVIEW_CONCURRENCY);
 
 export interface PreviewMeta {
   count: number;
@@ -32,7 +37,9 @@ export interface PreviewMeta {
 }
 
 export type PreviewState =
-  | { status: 'generating'; progress: number }
+  // `meta` is sent even while generating so the client can display frames as they
+  // stream in (progressive) instead of blocking on the whole set.
+  | { status: 'generating'; progress: number; meta: PreviewMeta }
   | { status: 'ready'; meta: PreviewMeta }
   | { status: 'error' };
 
@@ -70,7 +77,7 @@ async function runJob(v: VideoItem, job: Job): Promise<void> {
   const { interval, count, tileW, tileH } = job.meta;
   const duration = v.duration || count * interval;
 
-  await Promise.all(Array.from({ length: count }, (_, i) => (async () => {
+  await Promise.all(Array.from({ length: count }, (_, i) => previewLimiter.run(async () => {
     // Sample the middle of the bucket — avoids the black frame at t=0 and gives a
     // more representative thumbnail. Clamp inside the file.
     const t = Math.min(duration - 0.1, (i + 0.5) * interval);
@@ -83,7 +90,7 @@ async function runJob(v: VideoItem, job: Job): Promise<void> {
       ], { timeout: 30000 });
     } catch { /* leave a gap; the client falls back to a neighbouring frame */ }
     job.done++;
-  })()));
+  })));
 
   try { fs.writeFileSync(metaFileFor(id), JSON.stringify(job.meta)); } catch { /* ignore */ }
   job.status = 'ready';
@@ -97,7 +104,11 @@ export function requestPreview(v: VideoItem): PreviewState {
   const existing = jobs.get(id);
   if (existing?.status === 'ready') return { status: 'ready', meta: existing.meta };
   if (existing?.status === 'generating') {
-    return { status: 'generating', progress: existing.meta.count ? existing.done / existing.meta.count : 0 };
+    return {
+      status: 'generating',
+      progress: existing.meta.count ? existing.done / existing.meta.count : 0,
+      meta: existing.meta,
+    };
   }
   // A finished job may still be on disk from earlier this session.
   try {
@@ -112,7 +123,7 @@ export function requestPreview(v: VideoItem): PreviewState {
   const job: Job = { status: 'generating', meta, done: 0 };
   jobs.set(id, job);
   runJob(v, job).catch(() => { job.status = 'error'; });
-  return { status: 'generating', progress: 0 };
+  return { status: 'generating', progress: 0, meta };
 }
 
 export function deletePreview(id: string): void {

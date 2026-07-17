@@ -4,7 +4,8 @@
 import assert from 'assert';
 import { computePreviewLayout } from '../src/services/preview';
 
-const MAX_FRAMES = 60;
+const MAX_FRAMES = 40;
+const TILE_W = 320;
 
 let passed = 0;
 async function test(name: string, fn: () => Promise<void> | void) {
@@ -13,12 +14,12 @@ async function test(name: string, fn: () => Promise<void> | void) {
 }
 
 (async () => {
-  await test('short video (2 min): 2s buckets', () => {
+  await test('short video (2 min): buckets scale to the frame cap', () => {
     const m = computePreviewLayout(120, 1920, 1080);
-    assert.equal(m.interval, 2);
-    assert.equal(m.count, 60);
-    assert.equal(m.tileW, 160);
-    assert.equal(m.tileH, 90, '16:9 -> 90');
+    assert.equal(m.interval, Math.ceil(120 / MAX_FRAMES)); // 3s buckets at 40 frames
+    assert.equal(m.count, 40);
+    assert.equal(m.tileW, TILE_W);
+    assert.equal(m.tileH, 180, '16:9 -> 180');
   });
 
   await test('long video (47 min): frames stay capped, interval scales', () => {
@@ -34,7 +35,7 @@ async function test(name: string, fn: () => Promise<void> | void) {
   });
 
   await test('unknown dimensions default to 16:9', () => {
-    assert.equal(computePreviewLayout(600).tileH, 90);
+    assert.equal(computePreviewLayout(600).tileH, 180);
   });
 
   await test('buckets always cover the whole video, count never exceeds cap', () => {
