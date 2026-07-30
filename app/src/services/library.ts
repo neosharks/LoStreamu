@@ -49,6 +49,9 @@ function walkDir(dir: string, mediaRoot: string): VideoItem[] {
       const rel = path.relative(mediaRoot, abs);
       const id = makeVideoId(rel);
       const stat = fs.statSync(abs);
+      // Skip zero-byte files — a truncated/failed download leaves an empty
+      // container that would otherwise appear as an unplayable library entry.
+      if (stat.size === 0) continue;
       const folder = path.relative(mediaRoot, path.dirname(abs));
       items.push({
         id,

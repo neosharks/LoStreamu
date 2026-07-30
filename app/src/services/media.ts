@@ -5,6 +5,32 @@ import { runMedia } from './exec';
 
 const THUMB_DIR = path.join(APP_DIR, 'thumbnails');
 
+// ── Download integrity check ────────────────────────────────────────────────
+// yt-dlp can exit 0 yet leave a file that no browser will play: a merge that
+// silently failed, a truncated transfer, a container with no real video track.
+// classifyProbe() decides, from an ffprobe JSON dump, whether a file is a usable
+// video. Kept pure (no I/O) so it's unit-testable without ffprobe.
+export interface ProbeVerdict { ok: boolean; reason?: string; }
+
+export function classifyProbe(probe: unknown): ProbeVerdict {
+  const j = probe as { streams?: unknown; format?: { duration?: string } };
+  const streams = Array.isArray(j?.streams) ? (j.streams as Array<Record<string, unknown>>) : null;
+  if (!streams) return { ok: false, reason: 'no streams' };
+  const video = streams.find(s => s['codec_type'] === 'video');
+  if (!video) return { ok: false, reason: 'no video track' };
+  const dur = parseFloat(String(j.format?.duration ?? (video['duration'] as string) ?? '0'));
+  if (!(dur > 0)) return { ok: false, reason: 'no playable duration' };
+  return { ok: true };
+}
+
+// Run ffprobe on a file and return the parsed JSON (streams + format).
+export async function probeVideo(absPath: string): Promise<unknown> {
+  const { stdout } = await runMedia('ffprobe', [
+    '-v', 'quiet', '-print_format', 'json', '-show_streams', '-show_format', absPath,
+  ], { timeout: 20000 });
+  return JSON.parse(stdout);
+}
+
 export function thumbPath(id: string): string {
   return path.join(THUMB_DIR, `${id}.jpg`);
 }

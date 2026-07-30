@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, useEffect, useMemo, type ComponentType } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   ChevronLeft, User, Users, Wifi, Package, RefreshCw, LogOut,
@@ -12,11 +12,46 @@ import { Badge } from '@/components/ui/badge';
 import { authApi, settingsApi, usersApi } from '@/api/settings';
 import { videosApi } from '@/api/videos';
 import { AppUpdateModal } from '@/components/AppUpdateModal';
-import { formatBytes } from '@/lib/utils';
+import { formatBytes, cn } from '@/lib/utils';
+
+type TabId = 'account' | 'users' | 'network' | 'library' | 'application';
+
+interface TabDef {
+  id: TabId;
+  label: string;
+  icon: ComponentType<{ className?: string }>;
+  admin?: boolean;
+}
+
+const TABS: TabDef[] = [
+  { id: 'account', label: 'Account', icon: User },
+  { id: 'users', label: 'Users', icon: Users, admin: true },
+  { id: 'network', label: 'Network', icon: Wifi, admin: true },
+  { id: 'library', label: 'Library & storage', icon: RefreshCw },
+  { id: 'application', label: 'Application', icon: Package, admin: true },
+];
+
+// Card shell used by every settings panel — keeps spacing/borders consistent.
+function Section({ icon: Icon, title, children }: {
+  icon: ComponentType<{ className?: string }>;
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="overflow-hidden rounded-2xl border border-border bg-surface">
+      <div className="flex items-center gap-2.5 border-b border-border px-5 py-4">
+        <Icon className="h-4 w-4 text-text-muted" />
+        <h2 className="text-sm font-semibold text-text-primary">{title}</h2>
+      </div>
+      <div className="p-5">{children}</div>
+    </section>
+  );
+}
 
 export function Settings() {
   const navigate = useNavigate();
   const qc = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const { data: me } = useQuery({ queryKey: ['me'], queryFn: authApi.me });
   const { data: settings } = useQuery({ queryKey: ['settings'], queryFn: settingsApi.getProxy });
@@ -48,6 +83,33 @@ export function Settings() {
 
   useEffect(() => { if (me) setEmail(me.email); }, [me]);
   useEffect(() => { if (settings) setProxy(settings.proxy ?? ''); }, [settings]);
+
+  // ── Tab state lives in the URL (?tab=…) so a refresh or shared link reopens
+  // the same panel, and non-admins never land on an admin-only tab. ──────────
+  const visibleTabs = useMemo(() => TABS.filter(t => !t.admin || me?.isAdmin), [me?.isAdmin]);
+  const requestedTab = searchParams.get('tab') as TabId | null;
+  const activeTab: TabId =
+    requestedTab && visibleTabs.some(t => t.id === requestedTab)
+      ? requestedTab
+      : 'account';
+  const setActiveTab = (id: TabId) =>
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev);
+      id === 'account' ? next.delete('tab') : next.set('tab', id);
+      return next;
+    }, { replace: true });
+
+  // If an admin-only tab is in the URL but the user isn't an admin, drop it.
+  useEffect(() => {
+    if (requestedTab && !visibleTabs.some(t => t.id === requestedTab)) {
+      setSearchParams(prev => {
+        const next = new URLSearchParams(prev);
+        next.delete('tab');
+        return next;
+      }, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requestedTab, visibleTabs]);
 
   const changeMutation = useMutation({
     mutationFn: () => authApi.changePassword(currentPw, email !== me?.email ? email : undefined, newPw || undefined),
@@ -136,11 +198,235 @@ export function Settings() {
     onSuccess: () => { window.location.href = '/login'; },
   });
 
+  // ── Panels ──────────────────────────────────────────────────────────────
+  const accountPanel = (
+    <div className="space-y-4">
+      <Section icon={User} title="Profile">
+        <div className="space-y-3">
+          {me?.isAdmin && (
+            <div className="space-y-1.5">
+              <label className="text-xs text-text-muted">Email</label>
+              <Input value={email || me?.email || ''} onChange={e => setEmail(e.target.value)} type="email" />
+            </div>
+          )}
+          <div className="space-y-1.5">
+            <label className="text-xs text-text-muted">
+              Current password <span className="text-danger">*</span>
+            </label>
+            <Input value={currentPw} onChange={e => setCurrentPw(e.target.value)} type="password" placeholder="Required to save" />
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-xs text-text-muted">
+              New password <span className="text-text-subtle">(optional)</span>
+            </label>
+            <Input value={newPw} onChange={e => setNewPw(e.target.value)} type="password" placeholder="Leave blank to keep current" />
+          </div>
+          <Button onClick={() => changeMutation.mutate()} disabled={!currentPw || changeMutation.isPending} className="w-full">
+            {changeMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+            Save changes
+          </Button>
+        </div>
+      </Section>
+
+      <section className="overflow-hidden rounded-2xl border border-danger/20 bg-surface">
+        <div className="p-5">
+          <Button
+            variant="outline"
+            className="w-full border-danger/30 text-danger hover:bg-danger/10 hover:border-danger/50"
+            onClick={() => logoutMutation.mutate()}
+            disabled={logoutMutation.isPending}
+          >
+            {logoutMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <LogOut className="h-4 w-4" />}
+            Sign out
+          </Button>
+        </div>
+      </section>
+    </div>
+  );
+
+  const usersPanel = (
+    <Section icon={Users} title="Users">
+      <div className="space-y-2">
+        <div className="flex items-center gap-2 rounded-lg border border-border bg-elevated px-3 py-2.5">
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-medium text-text-primary">{me?.email}</p>
+            <p className="text-[11px] text-text-muted">Admin</p>
+          </div>
+        </div>
+        {managedUsers.map(u => (
+          <div key={u.email} className="flex items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2.5">
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm text-text-primary">{u.email}</p>
+            </div>
+            <button
+              onClick={() => deleteUserMutation.mutate(u.email)}
+              disabled={deleteUserMutation.isPending}
+              className="shrink-0 rounded p-1.5 text-text-muted hover:text-danger hover:bg-danger/10 transition-colors"
+            >
+              <Trash2 className="h-4 w-4" />
+            </button>
+          </div>
+        ))}
+        <div className="mt-3 rounded-xl border border-border bg-elevated/50 p-3 space-y-2">
+          <p className="flex items-center gap-1.5 text-xs font-medium text-text-muted">
+            <UserPlus className="h-3.5 w-3.5" /> Add user
+          </p>
+          <Input type="email" value={newEmail} onChange={e => setNewEmail(e.target.value)} placeholder="Email address" autoComplete="off" />
+          <Input type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)} placeholder="Password (min 8 chars)" autoComplete="new-password" />
+          <Button
+            className="w-full"
+            onClick={() => createUserMutation.mutate()}
+            disabled={!newEmail.trim() || newPassword.length < 8 || createUserMutation.isPending}
+          >
+            {createUserMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+            Create user
+          </Button>
+        </div>
+      </div>
+    </Section>
+  );
+
+  const networkPanel = (
+    <Section icon={Wifi} title="Network · Proxy / VPN">
+      <div className="space-y-3">
+        <p className="text-xs text-text-muted">
+          Route yt-dlp traffic through a proxy when the server can't reach a site directly.
+        </p>
+        <div className="space-y-1.5">
+          <label className="text-xs text-text-muted">Proxy URL</label>
+          <Input
+            value={proxy}
+            onChange={e => setProxy(e.target.value)}
+            placeholder="http://host:port or socks5://127.0.0.1:1080"
+            spellCheck={false}
+          />
+        </div>
+        <Button variant="secondary" onClick={() => proxyMutation.mutate()} disabled={proxyMutation.isPending} className="w-full">
+          {proxyMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+          Save proxy
+        </Button>
+      </div>
+    </Section>
+  );
+
+  const libraryPanel = (
+    <div className="space-y-4">
+      <Section icon={RefreshCw} title="Library">
+        <div className="space-y-3">
+          <p className="text-xs text-text-muted">
+            Force a rescan of the media directory to pick up files added externally.
+          </p>
+          <Button variant="secondary" onClick={() => rescanMutation.mutate()} disabled={rescanMutation.isPending} className="w-full">
+            {rescanMutation.isPending
+              ? <Loader2 className="h-4 w-4 animate-spin" />
+              : <RefreshCw className="h-4 w-4" />}
+            Rescan
+          </Button>
+        </div>
+      </Section>
+
+      {me?.isAdmin && (
+        <Section icon={Wrench} title="Maintenance">
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <p className="text-xs text-text-muted">
+                Remove orphaned thumbnails, leftover download temp files and stale cache
+                entries. Your videos are never touched.
+              </p>
+              <Button
+                variant="secondary"
+                className="w-full"
+                onClick={() => cleanMutation.mutate()}
+                disabled={cleanMutation.isPending}
+              >
+                {cleanMutation.isPending
+                  ? <Loader2 className="h-4 w-4 animate-spin" />
+                  : <Sparkles className="h-4 w-4" />}
+                Clean junk files
+              </Button>
+            </div>
+            <div className="space-y-2 border-t border-border pt-4">
+              <p className="text-xs text-text-muted">
+                Rebuild any missing or failed video thumbnails. Safe to run anytime — existing
+                thumbnails are kept. May take a while on large libraries.
+              </p>
+              <Button
+                variant="secondary"
+                className="w-full"
+                onClick={() => regenMutation.mutate()}
+                disabled={regenMutation.isPending}
+              >
+                {regenMutation.isPending
+                  ? <Loader2 className="h-4 w-4 animate-spin" />
+                  : <ImageIcon className="h-4 w-4" />}
+                Regenerate thumbnails
+              </Button>
+            </div>
+          </div>
+        </Section>
+      )}
+    </div>
+  );
+
+  const applicationPanel = (
+    <Section icon={Package} title="Application">
+      <div className="space-y-3">
+        {appVersion?.current && (
+          <div className="flex items-center justify-between rounded-lg border border-border bg-elevated px-3 py-2.5">
+            <span className="text-xs text-text-muted">Current version</span>
+            <div className="flex items-center gap-2">
+              <div className={`h-1.5 w-1.5 rounded-full ${appVersion.updateAvailable ? 'bg-warning' : 'bg-success'}`} />
+              <span className={`text-xs font-mono ${appVersion.updateAvailable ? 'text-warning' : 'text-text-primary'}`}>
+                v{appVersion.current}
+                {appVersion.updateAvailable && ` → v${appVersion.latest}`}
+              </span>
+            </div>
+          </div>
+        )}
+        <p className="text-xs text-text-muted">
+          Pull the latest release from GitHub and rebuild. The server will restart automatically.
+        </p>
+        <Button variant="secondary" className="w-full" onClick={() => setShowUpdate(true)}>
+          Update application
+        </Button>
+
+        {ytdlp?.current && (
+          <div className="flex items-center justify-between gap-3 border-t border-border pt-3">
+            <div className="flex min-w-0 items-center gap-2">
+              <span className="text-xs text-text-muted">yt-dlp</span>
+              <span className="font-mono text-xs text-text-primary">{ytdlp.current}</span>
+              {ytdlp.outdated
+                ? <Badge variant="warning">→ {ytdlp.latest}</Badge>
+                : <Badge variant="success">up to date</Badge>}
+            </div>
+            <Button
+              size="sm"
+              variant={ytdlp.outdated ? 'default' : 'secondary'}
+              onClick={() => ytdlpUpdateMutation.mutate()}
+              disabled={ytdlpUpdateMutation.isPending}
+              className="h-7 shrink-0 px-2 text-xs"
+            >
+              {ytdlpUpdateMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Update'}
+            </Button>
+          </div>
+        )}
+      </div>
+    </Section>
+  );
+
+  const panels: Record<TabId, React.ReactNode> = {
+    account: accountPanel,
+    users: usersPanel,
+    network: networkPanel,
+    library: libraryPanel,
+    application: applicationPanel,
+  };
+
   return (
     <>
       <div className="flex h-screen flex-col overflow-hidden bg-bg">
         <header
-          className="glass sticky top-0 z-40 flex h-14 items-center gap-3 border-b border-border px-4 pt-safe"
+          className="glass sticky top-0 z-40 flex h-14 items-center gap-3 border-b border-border px-4"
           style={{ paddingTop: 'env(safe-area-inset-top, 0px)' }}
         >
           <button
@@ -154,249 +440,37 @@ export function Settings() {
 
         <div className="flex-1 overflow-y-auto">
           <div
-            className="mx-auto max-w-2xl space-y-4 px-4 py-6"
+            className="mx-auto max-w-4xl px-4 py-6 lg:flex lg:gap-6"
             style={{ paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 1.5rem)' }}
           >
-
-            {/* ── Profile ─────────────────────────────────────────────── */}
-            <section className="overflow-hidden rounded-2xl border border-border bg-surface">
-              <div className="flex items-center gap-2.5 border-b border-border px-5 py-4">
-                <User className="h-4 w-4 text-text-muted" />
-                <h2 className="text-sm font-semibold text-text-primary">Profile</h2>
-              </div>
-              <div className="space-y-3 p-5">
-                {me?.isAdmin && (
-                  <div className="space-y-1.5">
-                    <label className="text-xs text-text-muted">Email</label>
-                    <Input value={email || me?.email || ''} onChange={e => setEmail(e.target.value)} type="email" />
-                  </div>
-                )}
-                <div className="space-y-1.5">
-                  <label className="text-xs text-text-muted">
-                    Current password <span className="text-danger">*</span>
-                  </label>
-                  <Input value={currentPw} onChange={e => setCurrentPw(e.target.value)} type="password" placeholder="Required to save" />
-                </div>
-                <div className="space-y-1.5">
-                  <label className="text-xs text-text-muted">
-                    New password <span className="text-text-subtle">(optional)</span>
-                  </label>
-                  <Input value={newPw} onChange={e => setNewPw(e.target.value)} type="password" placeholder="Leave blank to keep current" />
-                </div>
-                <Button onClick={() => changeMutation.mutate()} disabled={!currentPw || changeMutation.isPending} className="w-full">
-                  {changeMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
-                  Save changes
-                </Button>
-              </div>
-            </section>
-
-            {/* ── Users (admin) ───────────────────────────────────────── */}
-            {me?.isAdmin && (
-              <section className="overflow-hidden rounded-2xl border border-border bg-surface">
-                <div className="flex items-center gap-2.5 border-b border-border px-5 py-4">
-                  <Users className="h-4 w-4 text-text-muted" />
-                  <h2 className="text-sm font-semibold text-text-primary">Users</h2>
-                </div>
-                <div className="space-y-2 p-5">
-                  <div className="flex items-center gap-2 rounded-lg border border-border bg-elevated px-3 py-2.5">
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-medium text-text-primary">{me.email}</p>
-                      <p className="text-[11px] text-text-muted">Admin</p>
-                    </div>
-                  </div>
-                  {managedUsers.map(u => (
-                    <div key={u.email} className="flex items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2.5">
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm text-text-primary">{u.email}</p>
-                      </div>
-                      <button
-                        onClick={() => deleteUserMutation.mutate(u.email)}
-                        disabled={deleteUserMutation.isPending}
-                        className="shrink-0 rounded p-1.5 text-text-muted hover:text-danger hover:bg-danger/10 transition-colors"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
-                    </div>
-                  ))}
-                  <div className="mt-3 rounded-xl border border-border bg-elevated/50 p-3 space-y-2">
-                    <p className="flex items-center gap-1.5 text-xs font-medium text-text-muted">
-                      <UserPlus className="h-3.5 w-3.5" /> Add user
-                    </p>
-                    <Input type="email" value={newEmail} onChange={e => setNewEmail(e.target.value)} placeholder="Email address" autoComplete="off" />
-                    <Input type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)} placeholder="Password (min 8 chars)" autoComplete="new-password" />
-                    <Button
-                      className="w-full"
-                      onClick={() => createUserMutation.mutate()}
-                      disabled={!newEmail.trim() || newPassword.length < 8 || createUserMutation.isPending}
-                    >
-                      {createUserMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
-                      Create user
-                    </Button>
-                  </div>
-                </div>
-              </section>
-            )}
-
-            {/* ── Network (admin) ─────────────────────────────────────── */}
-            {me?.isAdmin && (
-              <section className="overflow-hidden rounded-2xl border border-border bg-surface">
-                <div className="flex items-center gap-2.5 border-b border-border px-5 py-4">
-                  <Wifi className="h-4 w-4 text-text-muted" />
-                  <h2 className="text-sm font-semibold text-text-primary">Network · Proxy / VPN</h2>
-                </div>
-                <div className="space-y-3 p-5">
-                  <p className="text-xs text-text-muted">
-                    Route yt-dlp traffic through a proxy when the server can't reach a site directly.
-                  </p>
-                  <div className="space-y-1.5">
-                    <label className="text-xs text-text-muted">Proxy URL</label>
-                    <Input
-                      value={proxy}
-                      onChange={e => setProxy(e.target.value)}
-                      placeholder="http://host:port or socks5://127.0.0.1:1080"
-                      spellCheck={false}
-                    />
-                  </div>
-                  <Button variant="secondary" onClick={() => proxyMutation.mutate()} disabled={proxyMutation.isPending} className="w-full">
-                    {proxyMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
-                    Save proxy
-                  </Button>
-                </div>
-              </section>
-            )}
-
-            {/* ── Library ─────────────────────────────────────────────── */}
-            <section className="overflow-hidden rounded-2xl border border-border bg-surface">
-              <div className="flex items-center gap-2.5 border-b border-border px-5 py-4">
-                <RefreshCw className="h-4 w-4 text-text-muted" />
-                <h2 className="text-sm font-semibold text-text-primary">Library</h2>
-              </div>
-              <div className="space-y-3 p-5">
-                <p className="text-xs text-text-muted">
-                  Force a rescan of the media directory to pick up files added externally.
-                </p>
-                <Button variant="secondary" onClick={() => rescanMutation.mutate()} disabled={rescanMutation.isPending} className="w-full">
-                  {rescanMutation.isPending
-                    ? <Loader2 className="h-4 w-4 animate-spin" />
-                    : <RefreshCw className="h-4 w-4" />}
-                  Rescan
-                </Button>
-              </div>
-            </section>
-
-            {/* ── Maintenance (admin) ─────────────────────────────────── */}
-            {me?.isAdmin && (
-              <section className="overflow-hidden rounded-2xl border border-border bg-surface">
-                <div className="flex items-center gap-2.5 border-b border-border px-5 py-4">
-                  <Wrench className="h-4 w-4 text-text-muted" />
-                  <h2 className="text-sm font-semibold text-text-primary">Maintenance</h2>
-                </div>
-                <div className="space-y-4 p-5">
-                  <div className="space-y-2">
-                    <p className="text-xs text-text-muted">
-                      Remove orphaned thumbnails, leftover download temp files and stale cache
-                      entries. Your videos are never touched.
-                    </p>
-                    <Button
-                      variant="secondary"
-                      className="w-full"
-                      onClick={() => cleanMutation.mutate()}
-                      disabled={cleanMutation.isPending}
-                    >
-                      {cleanMutation.isPending
-                        ? <Loader2 className="h-4 w-4 animate-spin" />
-                        : <Sparkles className="h-4 w-4" />}
-                      Clean junk files
-                    </Button>
-                  </div>
-                  <div className="space-y-2 border-t border-border pt-4">
-                    <p className="text-xs text-text-muted">
-                      Rebuild any missing or failed video thumbnails. Safe to run anytime — existing
-                      thumbnails are kept. May take a while on large libraries.
-                    </p>
-                    <Button
-                      variant="secondary"
-                      className="w-full"
-                      onClick={() => regenMutation.mutate()}
-                      disabled={regenMutation.isPending}
-                    >
-                      {regenMutation.isPending
-                        ? <Loader2 className="h-4 w-4 animate-spin" />
-                        : <ImageIcon className="h-4 w-4" />}
-                      Regenerate thumbnails
-                    </Button>
-                  </div>
-                </div>
-              </section>
-            )}
-
-            {/* ── Application (admin) ─────────────────────────────────── */}
-            {me?.isAdmin && (
-              <section className="overflow-hidden rounded-2xl border border-border bg-surface">
-                <div className="flex items-center gap-2.5 border-b border-border px-5 py-4">
-                  <Package className="h-4 w-4 text-text-muted" />
-                  <h2 className="text-sm font-semibold text-text-primary">Application</h2>
-                </div>
-                <div className="space-y-3 p-5">
-                  {appVersion?.current && (
-                    <div className="flex items-center justify-between rounded-lg border border-border bg-elevated px-3 py-2.5">
-                      <span className="text-xs text-text-muted">Current version</span>
-                      <div className="flex items-center gap-2">
-                        <div className={`h-1.5 w-1.5 rounded-full ${appVersion.updateAvailable ? 'bg-warning' : 'bg-success'}`} />
-                        <span className={`text-xs font-mono ${appVersion.updateAvailable ? 'text-warning' : 'text-text-primary'}`}>
-                          v{appVersion.current}
-                          {appVersion.updateAvailable && ` → v${appVersion.latest}`}
-                        </span>
-                      </div>
-                    </div>
+            {/* Section nav — sticky rail on desktop, horizontal scroller on mobile */}
+            <nav
+              className={cn(
+                'mb-4 flex gap-1.5 overflow-x-auto pb-1 lg:mb-0 lg:w-52 lg:shrink-0 lg:flex-col lg:overflow-visible lg:pb-0',
+                'lg:sticky lg:top-6 lg:self-start',
+              )}
+            >
+              {visibleTabs.map(({ id, label, icon: Icon }) => (
+                <button
+                  key={id}
+                  onClick={() => setActiveTab(id)}
+                  className={cn(
+                    'flex shrink-0 items-center gap-2.5 rounded-xl px-3.5 py-2.5 text-sm font-medium transition-colors lg:w-full',
+                    activeTab === id
+                      ? 'bg-accent-light text-accent-hover'
+                      : 'text-text-muted hover:bg-elevated hover:text-text-primary',
                   )}
-                  <p className="text-xs text-text-muted">
-                    Pull the latest release from GitHub and rebuild. The server will restart automatically.
-                  </p>
-                  <Button variant="secondary" className="w-full" onClick={() => setShowUpdate(true)}>
-                    Update application
-                  </Button>
-
-                  {/* yt-dlp component version + update */}
-                  {ytdlp?.current && (
-                    <div className="flex items-center justify-between gap-3 border-t border-border pt-3">
-                      <div className="flex min-w-0 items-center gap-2">
-                        <span className="text-xs text-text-muted">yt-dlp</span>
-                        <span className="font-mono text-xs text-text-primary">{ytdlp.current}</span>
-                        {ytdlp.outdated
-                          ? <Badge variant="warning">→ {ytdlp.latest}</Badge>
-                          : <Badge variant="success">up to date</Badge>}
-                      </div>
-                      <Button
-                        size="sm"
-                        variant={ytdlp.outdated ? 'default' : 'secondary'}
-                        onClick={() => ytdlpUpdateMutation.mutate()}
-                        disabled={ytdlpUpdateMutation.isPending}
-                        className="h-7 shrink-0 px-2 text-xs"
-                      >
-                        {ytdlpUpdateMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Update'}
-                      </Button>
-                    </div>
-                  )}
-                </div>
-              </section>
-            )}
-
-            {/* ── Sign out ────────────────────────────────────────────── */}
-            <section className="overflow-hidden rounded-2xl border border-danger/20 bg-surface">
-              <div className="p-5">
-                <Button
-                  variant="outline"
-                  className="w-full border-danger/30 text-danger hover:bg-danger/10 hover:border-danger/50"
-                  onClick={() => logoutMutation.mutate()}
-                  disabled={logoutMutation.isPending}
                 >
-                  {logoutMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <LogOut className="h-4 w-4" />}
-                  Sign out
-                </Button>
-              </div>
-            </section>
+                  <Icon className="h-4 w-4 shrink-0" />
+                  <span className="whitespace-nowrap">{label}</span>
+                </button>
+              ))}
+            </nav>
 
+            {/* Active panel */}
+            <div className="min-w-0 flex-1">
+              {panels[activeTab]}
+            </div>
           </div>
         </div>
       </div>

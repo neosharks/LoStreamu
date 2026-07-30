@@ -8,6 +8,7 @@ import { loadConfig, loadSecrets, APP_DIR, YT_DLP_LOCAL } from './config';
 import { rescan, buildMeta, findById } from './services/library';
 import { ytDlpBin } from './services/ytdlp';
 import { getThumbBuffer } from './services/media';
+import { resolveRange } from './services/httpRange';
 import { MIME } from './config';
 import authRouter from './routes/auth';
 import usersRouter from './routes/users';
@@ -47,33 +48,37 @@ app.use(session({
 app.get('/stream/:id', requireAuth, (req, res) => {
   const video = findById(req.params["id"] as string);
   if (!video) { res.status(404).json({ error: 'Not found' }); return; }
-  const stat = fs.statSync(video.absPath);
+  let stat: fs.Stats;
+  try { stat = fs.statSync(video.absPath); }
+  catch { res.status(404).json({ error: 'File missing' }); return; }
   const total = stat.size;
   const mime = MIME[video.ext] || 'video/mp4';
   // Let the browser cache/revalidate the file so replays and back-seeks reuse
   // already-downloaded bytes instead of re-streaming from disk.
   const lastMod = stat.mtime.toUTCString();
-  const range = req.headers.range;
   const HWM = 1 << 20;                 // 1 MiB read buffer — fewer syscalls
   const CHUNK = 8 * 1024 * 1024;       // cap for open-ended ranges → progressive streaming
 
+  const r = resolveRange(req.headers.range, total, CHUNK);
+  if (r.kind === 'unsatisfiable') {
+    // 416 with the true size so the player can recover, instead of a broken 206
+    // that stalls or scrambles playback.
+    res.writeHead(416, { 'Content-Range': `bytes */${total}`, 'Accept-Ranges': 'bytes' });
+    res.end();
+    return;
+  }
+
   let stream: fs.ReadStream;
-  if (range) {
-    const [s, e] = range.replace(/bytes=/, '').split('-');
-    const start = parseInt(s, 10) || 0;
-    // Open-ended request (`bytes=0-`, what <video> sends) → return a bounded chunk
-    // so playback starts on the first chunk and the player streams/seeks the rest,
-    // instead of waiting on one huge whole-file response.
-    const end = e ? Math.min(parseInt(e, 10), total - 1) : Math.min(start + CHUNK - 1, total - 1);
+  if (r.kind === 'range') {
     res.writeHead(206, {
-      'Content-Range': `bytes ${start}-${end}/${total}`,
+      'Content-Range': `bytes ${r.start}-${r.end}/${total}`,
       'Accept-Ranges': 'bytes',
-      'Content-Length': end - start + 1,
+      'Content-Length': r.end - r.start + 1,
       'Content-Type': mime,
       'Cache-Control': 'private, max-age=86400',
       'Last-Modified': lastMod,
     });
-    stream = fs.createReadStream(video.absPath, { start, end, highWaterMark: HWM });
+    stream = fs.createReadStream(video.absPath, { start: r.start, end: r.end, highWaterMark: HWM });
   } else {
     res.writeHead(200, {
       'Content-Length': total,

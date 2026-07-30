@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { Film, Search, Move, Trash2, X, Shuffle, FolderOpen, Plus, Download, Settings, ListChecks } from 'lucide-react';
@@ -33,10 +33,17 @@ function slugify(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'video';
 }
 
+const SORT_KEYS: readonly SortKey[] = [
+  'addedAt', 'addedAt-asc', 'name', 'name-desc', 'size', 'duration', 'random',
+];
+const DEFAULT_SORT: SortKey = 'random';
+const randomSeed = () => Math.floor(Math.random() * 1_000_000) + 1;
+
 export function Library() {
   const navigate = useNavigate();
   const qc = useQueryClient();
   const { id: watchId } = useParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { video: nowPlaying, open: openPlayer, close: closePlayer } = usePlayerStore();
   const { hydrate, jobs, batches } = useDownloadsStore();
   const prevPlayingId = useRef<string | null>(null);
@@ -47,11 +54,51 @@ export function Library() {
       .catch(() => {});
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const [folder, setFolder] = useState('');
-  const [search, setSearch] = useState('');
-  const [sort, setSort] = useState<SortKey>('random');
-  // Fresh seed each load so the default random order differs every visit.
-  const [shuffleSeed, setShuffleSeed] = useState(() => Math.floor(Math.random() * 1_000_000) + 1);
+  // ── View state lives in the URL query string ────────────────────────────────
+  // folder / search / sort / shuffle-seed are all encoded as search params, so a
+  // refresh, a shared link, or back/forward restores the exact same view — same
+  // folder, same search, same sort, and (for Shuffle) the same random order.
+  const folder = searchParams.get('folder') ?? '';
+  const search = searchParams.get('q') ?? '';
+  const sortParam = searchParams.get('sort') as SortKey | null;
+  const sort: SortKey = sortParam && SORT_KEYS.includes(sortParam) ? sortParam : DEFAULT_SORT;
+  // A seed generated this render is the fallback until it's written to the URL,
+  // so the first paint already shows a stable shuffle (no reorder flash).
+  const fallbackSeed = useRef(randomSeed());
+  const shuffleSeed = Number(searchParams.get('seed')) || fallbackSeed.current;
+
+  // Merge a mutation into the current params. `replace` (default) keeps filter
+  // tweaks out of the history stack so Back still returns to the previous page.
+  const patchParams = (
+    mut: (p: URLSearchParams) => void,
+    opts: { replace?: boolean } = {},
+  ) => {
+    const next = new URLSearchParams(searchParams);
+    mut(next);
+    setSearchParams(next, { replace: opts.replace ?? true });
+  };
+
+  const setFolder = (f: string) =>
+    patchParams(p => { f ? p.set('folder', f) : p.delete('folder'); });
+  const setSearch = (q: string) =>
+    patchParams(p => { q ? p.set('q', q) : p.delete('q'); });
+  const setSort = (s: SortKey) =>
+    patchParams(p => {
+      s === DEFAULT_SORT ? p.delete('sort') : p.set('sort', s);
+      // Shuffle needs a seed pinned in the URL; any other sort drops it.
+      s === 'random' ? p.set('seed', String(randomSeed())) : p.delete('seed');
+    });
+  const reshuffle = () =>
+    patchParams(p => { p.delete('sort'); p.set('seed', String(randomSeed())); });
+
+  // Pin the shuffle seed into the URL on first load so a refresh keeps the order.
+  useEffect(() => {
+    if (sort === 'random' && !searchParams.get('seed')) {
+      patchParams(p => p.set('seed', String(fallbackSeed.current)), { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const [showAdd, setShowAdd] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
 
@@ -175,14 +222,18 @@ export function Library() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [watchId, videos]);
 
-  // store → URL: reflect the playing video in the address bar; go back when closed.
+  // store → URL: reflect the playing video in the address bar; go back when
+  // closed. The filter query string rides along on both hops so closing the
+  // player drops the viewer back into the exact folder/search/sort they came from.
   useEffect(() => {
+    const qs = searchParams.toString();
+    const suffix = qs ? `?${qs}` : '';
     if (nowPlaying) {
       prevPlayingId.current = nowPlaying.id;
-      if (watchId !== nowPlaying.id) navigate(`/watch/${nowPlaying.id}/${slugify(nowPlaying.name)}`);
+      if (watchId !== nowPlaying.id) navigate(`/watch/${nowPlaying.id}/${slugify(nowPlaying.name)}${suffix}`);
     } else if (prevPlayingId.current) {
       prevPlayingId.current = null;
-      if (watchId) navigate('/');
+      if (watchId) navigate({ pathname: '/', search: qs });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nowPlaying?.id]);
@@ -267,11 +318,7 @@ export function Library() {
                 <label className="text-xs text-text-muted">Sort</label>
                 <select
                   value={sort}
-                  onChange={e => {
-                    const v = e.target.value as SortKey;
-                    if (v === 'random') setShuffleSeed(s => s + 1);
-                    setSort(v);
-                  }}
+                  onChange={e => setSort(e.target.value as SortKey)}
                   className="rounded-lg border border-border bg-elevated px-2 py-1 text-xs text-text-primary focus:outline-none focus:ring-2 focus:ring-accent"
                 >
                   <option value="addedAt">Newest first</option>
@@ -284,7 +331,7 @@ export function Library() {
                 </select>
                 {sort === 'random' && (
                   <button
-                    onClick={() => setShuffleSeed(s => s + 1)}
+                    onClick={reshuffle}
                     title="Re-shuffle"
                     className="rounded-lg border border-border bg-elevated p-1 text-text-muted hover:text-text-primary hover:bg-border transition-colors"
                   >

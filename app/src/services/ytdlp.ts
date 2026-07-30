@@ -47,6 +47,33 @@ export function ytSpeedArgs(): string[] {
   return ['--concurrent-fragments', '4', '--http-chunk-size', '10M'];
 }
 
+// Format selection + container flags shared by every media download.
+//
+// Why this shape: a self-hosted library is watched from every browser (incl.
+// Safari / iOS), so the file on disk must be broadly playable WITHOUT re-encoding
+// (this app runs on tiny low-CPU boxes). We therefore:
+//   • prefer an MP4 (H.264 video + AAC audio) stream when the site offers one —
+//     the one combo every browser plays — via the `-f` preference ladder AND the
+//     `-S` format sort (vcodec:h264 / acodec:aac). VP9/AV1/Opus are the fallback,
+//     not the default, so we don't hand Safari a file it can't decode;
+//   • always land in an MP4 container (`--merge-output-format` + `--remux-video`);
+//   • move the moov atom to the front (`+faststart`) so the file streams and seeks
+//     from byte 0 instead of the player hunting for the index — the usual cause of
+//     "it starts in the wrong place / jumps around" on progressive playback.
+export function ytFormatArgs(): string[] {
+  return [
+    '-f',
+    // avc1+m4a mp4 → any mp4 video+m4a → any progressive mp4 → best video+audio → best
+    'bv*[vcodec^=avc1][ext=mp4]+ba[ext=m4a]/bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/b',
+    '-S', 'vcodec:h264,acodec:aac,ext:mp4',
+    '--merge-output-format', 'mp4',
+    '--remux-video', 'mp4',
+    // Move the MP4 index (moov) to the front so the file streams/plays immediately
+    // instead of needing a full download first.
+    '--postprocessor-args', 'ffmpeg:-movflags +faststart',
+  ];
+}
+
 // Minimum video length to download. Anything shorter is skipped by yt-dlp
 // (it reads duration from metadata first and never downloads the media).
 export const MIN_DURATION_SEC = 600; // 10 minutes

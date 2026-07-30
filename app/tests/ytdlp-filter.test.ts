@@ -2,7 +2,7 @@
    Covers the duration filter's YouTube exemption: YouTube URLs of any length
    are allowed (no --match-filter), everything else keeps the 10-min minimum. */
 import assert from 'assert';
-import { isYouTubeUrl, ytFilterArgs, MIN_DURATION_SEC } from '../src/services/ytdlp';
+import { isYouTubeUrl, ytFilterArgs, ytFormatArgs, MIN_DURATION_SEC } from '../src/services/ytdlp';
 
 let passed = 0;
 async function test(name: string, fn: () => Promise<void> | void) {
@@ -50,6 +50,20 @@ const NON_YT = [
         `expected duration filter: ${u}`,
       );
     }
+  });
+
+  await test('ytFormatArgs: prefers browser-safe codecs, mp4 container, faststart', () => {
+    const args = ytFormatArgs();
+    const flag = (name: string) => args[args.indexOf(name) + 1];
+    // Format ladder leads with an H.264 (avc1) + AAC (m4a) mp4 pick.
+    assert.ok(flag('-f').startsWith('bv*[vcodec^=avc1][ext=mp4]+ba[ext=m4a]'), 'H.264/AAC preferred first');
+    // Sort also biases toward h264 / aac / mp4 when the site offers a choice.
+    assert.equal(flag('-S'), 'vcodec:h264,acodec:aac,ext:mp4');
+    // Always land in an mp4 container.
+    assert.equal(flag('--merge-output-format'), 'mp4');
+    assert.equal(flag('--remux-video'), 'mp4');
+    // moov atom up front so progressive playback starts at byte 0.
+    assert.ok(flag('--postprocessor-args').includes('+faststart'), 'faststart applied');
   });
 
   console.log(`\n${passed} passed`);
