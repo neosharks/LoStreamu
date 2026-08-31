@@ -1,10 +1,11 @@
 export interface AppConfig {
   port: number;
-  email: string;
-  passwordHash: string;
   mediaDir: string;
   proxy?: string;
   updateUrl?: string;
+  /** Legacy email/password fields — read once during migration, then removed. */
+  email?: string;
+  passwordHash?: string;
 }
 
 export interface VideoItem {

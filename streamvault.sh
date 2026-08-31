@@ -254,7 +254,7 @@ printf "  ║  Container : LXC %-41s║\n" "${CT_ID} (${CT_HOSTNAME})"
 printf "  ║  IP address: %-44s║\n" "${IP:-<check pct exec ${CT_ID} -- hostname -I>}"
 printf "  ║  Web UI    : http://%-39s║\n" "${IP:-<container-ip>}:${APP_PORT}"
 echo "  ╠════════════════════════════════════════════════════════════╣"
-echo "  ║  Create your account on the first visit.                  ║"
+echo "  ║  First visit: create the admin profile + 6-digit PIN.      ║"
 echo "  ╚════════════════════════════════════════════════════════════╝"
 echo -e "${CL}"
 
@@ -263,8 +263,13 @@ echo -e "   pct exec ${CT_ID} -- journalctl -u streamvault -f             ${DIM}
 echo -e "   pct exec ${CT_ID} -- systemctl restart streamvault             ${DIM}# restart${CL}"
 echo -e "   pct exec ${CT_ID} -- cat /var/log/streamvault-install.log      ${DIM}# full install log${CL}"
 echo
-echo -e " ${INFO} Reset password:"
-echo -e "   pct exec ${CT_ID} -- bash -c \\"
-echo -e "     'cd /opt/streamvault && node dist/cli/set-password.js you@email.com newpass'"
+echo -e " ${INFO} Your data lives in /var/lib/streamvault (videos, thumbnails, profiles)."
+echo -e "   It is outside the app directory, so reinstalling LoStreamu keeps it."
+echo -e "   Bigger library? Mount a disk there:"
+echo -e "     pct set ${CT_ID} -mp0 local-lvm:500,mp=/var/lib/streamvault/media"
+echo
+echo -e " ${INFO} Forgotten PIN: there is no reset link. Starting over means"
+echo -e "   removing the profiles file — your videos are untouched:"
+echo -e "   pct exec ${CT_ID} -- bash -c 'rm /var/lib/streamvault/users.json'"
 echo -e "   pct exec ${CT_ID} -- systemctl restart streamvault"
 echo

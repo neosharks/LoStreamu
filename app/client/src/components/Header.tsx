@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import { Button } from './ui/button';
 import { Logo } from './Logo';
 import { settingsApi, authApi } from '@/api/settings';
+import { ProfileAvatar } from './ProfileAvatar';
 import { videosApi } from '@/api/videos';
 import { cn } from '@/lib/utils';
 import { AppUpdateModal } from './AppUpdateModal';
@@ -21,6 +22,12 @@ export function Header({ onAddVideos, videoCount, search, onSearch }: HeaderProp
   const navigate = useNavigate();
   const qc = useQueryClient();
   const [showUpdate, setShowUpdate] = useState(false);
+
+  const { data: me } = useQuery({
+    queryKey: ['me'],
+    queryFn: authApi.me,
+    staleTime: 60_000,
+  });
 
   const { data: appVersion } = useQuery({
     queryKey: ['app-version'],
@@ -116,6 +123,15 @@ export function Header({ onAddVideos, videoCount, search, onSearch }: HeaderProp
         <Button size="icon" variant="ghost" onClick={() => navigate('/settings')} title="Settings">
           <Settings className="h-4 w-4" />
         </Button>
+        {me && (
+          <button
+            onClick={() => navigate('/settings')}
+            title={`${me.name} — account settings`}
+            className="ml-1 rounded-lg ring-2 ring-transparent transition-all duration-150 hover:ring-accent active:scale-95"
+          >
+            <ProfileAvatar name={me.name} avatar={me.avatar} size={28} className="rounded-lg" />
+          </button>
+        )}
         <Button size="icon" variant="ghost" onClick={() => logoutMutation.mutate()} title="Sign out">
           <LogOut className="h-4 w-4" />
         </Button>

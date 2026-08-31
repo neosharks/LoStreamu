@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { APP_DIR } from '../config';
+import { PREVIEW_DIR } from '../config';
 import { runMedia, createLimiter, PREVIEW_CONCURRENCY } from './exec';
 import type { VideoItem } from '../types';
 
@@ -19,7 +19,6 @@ import type { VideoItem } from '../types';
 // Cleanup is guaranteed: the dir is deleted when the player closes, wiped on
 // boot, and swept when idle — nothing accumulates on disk.
 
-const PREVIEW_DIR = path.join(APP_DIR, 'previews');
 const MAX_FRAMES = 40;   // cap frames regardless of length (bounds ffmpeg spawns)
 const TILE_W = 320;      // px per frame; height derived from the video's aspect
 const IDLE_MS = 15 * 60 * 1000;

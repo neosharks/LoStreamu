@@ -4,12 +4,18 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   ChevronLeft, User, Users, Wifi, Package, RefreshCw, LogOut,
   Loader2, Trash2, UserPlus, Sparkles, Image as ImageIcon, Wrench,
+  KeyRound, Lock, MonitorSmartphone, ShieldCheck, Unlock,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { authApi, settingsApi, usersApi } from '@/api/settings';
+import { ProfileAvatar } from '@/components/ProfileAvatar';
+import { AvatarPicker } from '@/components/AvatarPicker';
+import { PinField } from '@/components/PinField';
+import { PIN_LENGTH } from '@/components/PinPad';
+import type { AvatarKey } from '@/lib/avatars';
 import { videosApi } from '@/api/videos';
 import { AppUpdateModal } from '@/components/AppUpdateModal';
 import { formatBytes, cn } from '@/lib/utils';
@@ -73,15 +79,29 @@ export function Settings() {
     retry: false,
   });
 
+  const [name, setName] = useState('');
   const [email, setEmail] = useState('');
-  const [currentPw, setCurrentPw] = useState('');
-  const [newPw, setNewPw] = useState('');
+  const [avatar, setAvatar] = useState<AvatarKey>('indigo');
+  const [currentPin, setCurrentPin] = useState('');
+  const [newPin, setNewPin] = useState('');
+  const [confirmPin, setConfirmPin] = useState('');
   const [proxy, setProxy] = useState('');
   const [showUpdate, setShowUpdate] = useState(false);
-  const [newEmail, setNewEmail] = useState('');
-  const [newPassword, setNewPassword] = useState('');
 
-  useEffect(() => { if (me) setEmail(me.email); }, [me]);
+  // Add-profile form (admin only)
+  const [draft, setDraft] = useState({ name: '', email: '', pin: '', isAdmin: false });
+  const [draftAvatar, setDraftAvatar] = useState<AvatarKey>('violet');
+
+  // PIN reset the admin hands to a member who forgot theirs
+  const [resetFor, setResetFor] = useState<string | null>(null);
+  const [resetPin, setResetPin] = useState('');
+
+  useEffect(() => {
+    if (!me) return;
+    setName(me.name);
+    setEmail(me.email);
+    setAvatar(me.avatar as AvatarKey);
+  }, [me]);
   useEffect(() => { if (settings) setProxy(settings.proxy ?? ''); }, [settings]);
 
   // ── Tab state lives in the URL (?tab=…) so a refresh or shared link reopens
@@ -111,15 +131,36 @@ export function Settings() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [requestedTab, visibleTabs]);
 
-  const changeMutation = useMutation({
-    mutationFn: () => authApi.changePassword(currentPw, email !== me?.email ? email : undefined, newPw || undefined),
+  const profileMutation = useMutation({
+    mutationFn: () => {
+      const changingPin = !!newPin;
+      const changingEmail = email.toLowerCase() !== me?.email;
+      return authApi.updateProfile({
+        name,
+        avatar,
+        ...(changingEmail ? { email } : {}),
+        ...(changingPin ? { newPin } : {}),
+        ...(changingPin || changingEmail ? { currentPin } : {}),
+      });
+    },
     onSuccess: () => {
-      toast.success('Account updated');
-      setCurrentPw('');
-      setNewPw('');
+      toast.success('Profile updated');
+      setCurrentPin('');
+      setNewPin('');
+      setConfirmPin('');
       qc.invalidateQueries({ queryKey: ['me'] });
+      qc.invalidateQueries({ queryKey: ['users'] });
     },
     onError: (err: any) => toast.error(err.response?.data?.error || 'Update failed'),
+  });
+
+  const forgetDevicesMutation = useMutation({
+    mutationFn: authApi.forgetDevices,
+    onSuccess: () => {
+      toast.success('Trusted devices cleared — the next sign-in needs email + PIN');
+      qc.invalidateQueries({ queryKey: ['me'] });
+    },
+    onError: (err: any) => toast.error(err.response?.data?.error || 'Could not clear devices'),
   });
 
   const proxyMutation = useMutation({
@@ -129,23 +170,48 @@ export function Settings() {
   });
 
   const createUserMutation = useMutation({
-    mutationFn: () => usersApi.create(newEmail, newPassword),
+    mutationFn: () => usersApi.create({
+      name: draft.name.trim(),
+      email: draft.email.trim(),
+      pin: draft.pin,
+      avatar: draftAvatar,
+      isAdmin: draft.isAdmin,
+    }),
     onSuccess: () => {
-      toast.success(`User ${newEmail} created`);
-      setNewEmail('');
-      setNewPassword('');
+      toast.success(`Profile ${draft.name.trim()} created`);
+      setDraft({ name: '', email: '', pin: '', isAdmin: false });
       qc.invalidateQueries({ queryKey: ['users'] });
     },
-    onError: (err: any) => toast.error(err.response?.data?.error || 'Could not create user'),
+    onError: (err: any) => toast.error(err.response?.data?.error || 'Could not create profile'),
+  });
+
+  const resetPinMutation = useMutation({
+    mutationFn: (id: string) => usersApi.update(id, { pin: resetPin }),
+    onSuccess: () => {
+      toast.success('PIN reset — that profile signs in with email + new PIN once');
+      setResetFor(null);
+      setResetPin('');
+      qc.invalidateQueries({ queryKey: ['users'] });
+    },
+    onError: (err: any) => toast.error(err.response?.data?.error || 'Could not reset the PIN'),
+  });
+
+  const unlockMutation = useMutation({
+    mutationFn: (id: string) => usersApi.unlock(id),
+    onSuccess: () => {
+      toast.success('Profile unlocked');
+      qc.invalidateQueries({ queryKey: ['users'] });
+    },
+    onError: (err: any) => toast.error(err.response?.data?.error || 'Could not unlock'),
   });
 
   const deleteUserMutation = useMutation({
-    mutationFn: (em: string) => usersApi.remove(em),
-    onSuccess: (_, em) => {
-      toast.success(`User ${em} removed`);
+    mutationFn: (id: string) => usersApi.remove(id),
+    onSuccess: () => {
+      toast.success('Profile removed');
       qc.invalidateQueries({ queryKey: ['users'] });
     },
-    onError: (err: any) => toast.error(err.response?.data?.error || 'Could not remove user'),
+    onError: (err: any) => toast.error(err.response?.data?.error || 'Could not remove profile'),
   });
 
   const rescanMutation = useMutation({
@@ -160,11 +226,10 @@ export function Settings() {
   const cleanMutation = useMutation({
     mutationFn: settingsApi.cleanJunk,
     onSuccess: (r) => {
-      toast.success(
-        r.removedFiles
-          ? `Cleaned ${r.removedFiles} file${r.removedFiles === 1 ? '' : 's'} · freed ${formatBytes(r.freedBytes)}`
-          : 'Already clean — nothing to remove',
-      );
+      const parts: string[] = [];
+      if (r.removedFiles) parts.push(`${r.removedFiles} file${r.removedFiles === 1 ? '' : 's'} · freed ${formatBytes(r.freedBytes)}`);
+      if (r.emptyFolders) parts.push(`${r.emptyFolders} empty folder${r.emptyFolders === 1 ? '' : 's'}`);
+      toast.success(parts.length ? `Cleaned ${parts.join(' · ')}` : 'Already clean — nothing to remove');
       qc.invalidateQueries({ queryKey: ['videos'] });
       qc.invalidateQueries({ queryKey: ['tree'] });
     },
@@ -199,31 +264,98 @@ export function Settings() {
   });
 
   // ── Panels ──────────────────────────────────────────────────────────────
+  const pinChangeRequested = !!newPin || !!confirmPin;
+  const pinMismatch = pinChangeRequested && newPin !== confirmPin;
+  const emailChanged = !!me && email.toLowerCase() !== me.email;
+  const needsPinToSave = pinChangeRequested || emailChanged;
+  const profileSaveBlocked =
+    !name.trim() ||
+    pinMismatch ||
+    (pinChangeRequested && newPin.length !== PIN_LENGTH) ||
+    (needsPinToSave && currentPin.length !== PIN_LENGTH);
+
   const accountPanel = (
     <div className="space-y-4">
       <Section icon={User} title="Profile">
+        <div className="space-y-4">
+          <div className="flex items-center gap-4">
+            <ProfileAvatar name={name || me?.name || 'You'} avatar={avatar} size={64} />
+            <div className="min-w-0 flex-1 space-y-1.5">
+              <label className="text-xs text-text-muted">Display name</label>
+              <Input value={name} onChange={e => setName(e.target.value)} maxLength={40} />
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-xs text-text-muted">Profile colour</label>
+            <AvatarPicker value={avatar} onChange={setAvatar} />
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-xs text-text-muted">Email</label>
+            <Input value={email} onChange={e => setEmail(e.target.value)} type="email" />
+            <p className="text-[11px] text-text-subtle">
+              Asked alongside your PIN the first time you sign in on a new device.
+            </p>
+          </div>
+        </div>
+      </Section>
+
+      <Section icon={KeyRound} title="PIN">
         <div className="space-y-3">
-          {me?.isAdmin && (
+          <p className="text-xs text-text-muted">
+            Six digits, no repeated or consecutive runs. There is no reset link — an
+            admin can issue a new PIN, but a forgotten admin PIN cannot be recovered.
+          </p>
+          <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
-              <label className="text-xs text-text-muted">Email</label>
-              <Input value={email || me?.email || ''} onChange={e => setEmail(e.target.value)} type="email" />
+              <label className="text-xs text-text-muted">New PIN</label>
+              <PinField value={newPin} onChange={setNewPin} />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs text-text-muted">Confirm new PIN</label>
+              <PinField value={confirmPin} onChange={setConfirmPin} />
+            </div>
+          </div>
+          {pinMismatch && <p className="text-xs text-danger">The two PINs do not match.</p>}
+          {needsPinToSave && (
+            <div className="space-y-1.5">
+              <label className="text-xs text-text-muted">
+                Current PIN <span className="text-danger">*</span>
+              </label>
+              <PinField value={currentPin} onChange={setCurrentPin} />
+              <p className="text-[11px] text-text-subtle">
+                Required to change your {pinChangeRequested ? 'PIN' : 'email'}.
+              </p>
             </div>
           )}
-          <div className="space-y-1.5">
-            <label className="text-xs text-text-muted">
-              Current password <span className="text-danger">*</span>
-            </label>
-            <Input value={currentPw} onChange={e => setCurrentPw(e.target.value)} type="password" placeholder="Required to save" />
-          </div>
-          <div className="space-y-1.5">
-            <label className="text-xs text-text-muted">
-              New password <span className="text-text-subtle">(optional)</span>
-            </label>
-            <Input value={newPw} onChange={e => setNewPw(e.target.value)} type="password" placeholder="Leave blank to keep current" />
-          </div>
-          <Button onClick={() => changeMutation.mutate()} disabled={!currentPw || changeMutation.isPending} className="w-full">
-            {changeMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+          <Button
+            onClick={() => profileMutation.mutate()}
+            disabled={profileSaveBlocked || profileMutation.isPending}
+            className="w-full"
+          >
+            {profileMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
             Save changes
+          </Button>
+        </div>
+      </Section>
+
+      <Section icon={MonitorSmartphone} title="Trusted devices">
+        <div className="space-y-3">
+          <p className="text-xs text-text-muted">
+            {me?.devices
+              ? `${me.devices} browser${me.devices === 1 ? '' : 's'} can sign in with your PIN alone.`
+              : 'No browser is trusted yet — the next sign-in will ask for your email too.'}
+            {' '}Clear them if a device is lost or shared.
+          </p>
+          <Button
+            variant="secondary"
+            className="w-full"
+            onClick={() => forgetDevicesMutation.mutate()}
+            disabled={!me?.devices || forgetDevicesMutation.isPending}
+          >
+            {forgetDevicesMutation.isPending
+              ? <Loader2 className="h-4 w-4 animate-spin" />
+              : <Lock className="h-4 w-4" />}
+            Forget all devices
           </Button>
         </div>
       </Section>
@@ -245,42 +377,121 @@ export function Settings() {
   );
 
   const usersPanel = (
-    <Section icon={Users} title="Users">
-      <div className="space-y-2">
-        <div className="flex items-center gap-2 rounded-lg border border-border bg-elevated px-3 py-2.5">
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-medium text-text-primary">{me?.email}</p>
-            <p className="text-[11px] text-text-muted">Admin</p>
-          </div>
-        </div>
+    <Section icon={Users} title="Profiles">
+      <div className="space-y-2.5">
         {managedUsers.map(u => (
-          <div key={u.email} className="flex items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2.5">
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-sm text-text-primary">{u.email}</p>
+          <div key={u.id} className="rounded-xl border border-border bg-elevated/60 p-3">
+            <div className="flex items-center gap-3">
+              <ProfileAvatar name={u.name} avatar={u.avatar} size={40} className="rounded-xl" />
+              <div className="min-w-0 flex-1">
+                <p className="flex items-center gap-1.5 truncate text-sm font-medium text-text-primary">
+                  {u.name}
+                  {u.isAdmin && <Badge variant="default">admin</Badge>}
+                  {u.id === me?.id && <span className="text-[11px] text-text-subtle">you</span>}
+                </p>
+                <p className="truncate text-[11px] text-text-muted">{u.email}</p>
+              </div>
+              <div className="flex shrink-0 items-center gap-1">
+                {u.lockedFor > 0 && (
+                  <button
+                    onClick={() => unlockMutation.mutate(u.id)}
+                    disabled={unlockMutation.isPending}
+                    title={`Locked for ${u.lockedFor}s — unlock now`}
+                    className="rounded p-1.5 text-warning transition-colors hover:bg-warning/10"
+                  >
+                    <Unlock className="h-4 w-4" />
+                  </button>
+                )}
+                <button
+                  onClick={() => { setResetFor(resetFor === u.id ? null : u.id); setResetPin(''); }}
+                  title="Set a new PIN"
+                  className="rounded p-1.5 text-text-muted transition-colors hover:bg-accent/10 hover:text-accent"
+                >
+                  <KeyRound className="h-4 w-4" />
+                </button>
+                {u.id !== me?.id && (
+                  <button
+                    onClick={() => deleteUserMutation.mutate(u.id)}
+                    disabled={deleteUserMutation.isPending}
+                    title="Remove profile"
+                    className="rounded p-1.5 text-text-muted transition-colors hover:bg-danger/10 hover:text-danger"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                )}
+              </div>
             </div>
-            <button
-              onClick={() => deleteUserMutation.mutate(u.email)}
-              disabled={deleteUserMutation.isPending}
-              className="shrink-0 rounded p-1.5 text-text-muted hover:text-danger hover:bg-danger/10 transition-colors"
-            >
-              <Trash2 className="h-4 w-4" />
-            </button>
+
+            {resetFor === u.id && (
+              <div className="mt-3 flex items-end gap-2 border-t border-border pt-3">
+                <div className="flex-1 space-y-1.5">
+                  <label className="text-xs text-text-muted">New 6-digit PIN</label>
+                  <PinField value={resetPin} onChange={setResetPin} />
+                </div>
+                <Button
+                  onClick={() => resetPinMutation.mutate(u.id)}
+                  disabled={resetPin.length !== PIN_LENGTH || resetPinMutation.isPending}
+                >
+                  {resetPinMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+                  Set PIN
+                </Button>
+              </div>
+            )}
           </div>
         ))}
-        <div className="mt-3 rounded-xl border border-border bg-elevated/50 p-3 space-y-2">
+
+        <div className="mt-3 space-y-2.5 rounded-xl border border-border bg-elevated/50 p-3">
           <p className="flex items-center gap-1.5 text-xs font-medium text-text-muted">
-            <UserPlus className="h-3.5 w-3.5" /> Add user
+            <UserPlus className="h-3.5 w-3.5" /> Add profile
           </p>
-          <Input type="email" value={newEmail} onChange={e => setNewEmail(e.target.value)} placeholder="Email address" autoComplete="off" />
-          <Input type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)} placeholder="Password (min 8 chars)" autoComplete="new-password" />
+          <div className="flex items-center gap-3">
+            <ProfileAvatar name={draft.name || 'New'} avatar={draftAvatar} size={40} className="rounded-xl" />
+            <Input
+              value={draft.name}
+              onChange={e => setDraft({ ...draft, name: e.target.value })}
+              placeholder="Display name"
+              maxLength={40}
+            />
+          </div>
+          <AvatarPicker value={draftAvatar} onChange={setDraftAvatar} />
+          <Input
+            type="email"
+            value={draft.email}
+            onChange={e => setDraft({ ...draft, email: e.target.value })}
+            placeholder="Email address"
+            autoComplete="off"
+          />
+          <PinField
+            value={draft.pin}
+            onChange={pin => setDraft({ ...draft, pin })}
+            placeholder="6-digit PIN"
+          />
+          <label className="flex cursor-pointer items-center gap-2 text-xs text-text-muted">
+            <input
+              type="checkbox"
+              checked={draft.isAdmin}
+              onChange={e => setDraft({ ...draft, isAdmin: e.target.checked })}
+              className="h-3.5 w-3.5 accent-accent"
+            />
+            <ShieldCheck className="h-3.5 w-3.5" /> Make this profile an admin
+          </label>
           <Button
             className="w-full"
             onClick={() => createUserMutation.mutate()}
-            disabled={!newEmail.trim() || newPassword.length < 8 || createUserMutation.isPending}
+            disabled={
+              !draft.name.trim() ||
+              !draft.email.trim() ||
+              draft.pin.length !== PIN_LENGTH ||
+              createUserMutation.isPending
+            }
           >
             {createUserMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
-            Create user
+            Create profile
           </Button>
+          <p className="text-[11px] text-text-subtle">
+            Share the PIN with them — their first sign-in on each device also asks for
+            this email. They can change both from their own settings.
+          </p>
         </div>
       </div>
     </Section>
@@ -330,8 +541,8 @@ export function Settings() {
           <div className="space-y-4">
             <div className="space-y-2">
               <p className="text-xs text-text-muted">
-                Remove orphaned thumbnails, leftover download temp files and stale cache
-                entries. Your videos are never touched.
+                Remove orphaned thumbnails, leftover download temp files, stale cache
+                entries and empty folders. Your videos are never touched.
               </p>
               <Button
                 variant="secondary"

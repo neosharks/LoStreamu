@@ -4,7 +4,10 @@ import cookieParser from 'cookie-parser';
 import path from 'path';
 import fs from 'fs';
 import { execFile } from 'child_process';
-import { loadConfig, loadSecrets, APP_DIR, YT_DLP_LOCAL } from './config';
+import {
+  loadConfig, loadSecrets, ensureDataDirs, migrateLegacyData,
+  APP_DIR, DATA_DIR, YT_DLP_LOCAL,
+} from './config';
 import { rescan, buildMeta, findById } from './services/library';
 import { ytDlpBin } from './services/ytdlp';
 import { getThumbBuffer } from './services/media';
@@ -21,18 +24,25 @@ import appUpdateRouter from './routes/appUpdate';
 import previewRouter from './routes/preview';
 import { initPreviews } from './services/preview';
 import { requireAuth } from './middleware/auth';
+import { migratePasswordEraConfig } from './services/users';
 import { errorHandler } from './middleware/error';
 
 declare module 'express-session' {
   interface SessionData { userId: string; }
 }
 
+// Data lives outside the app tree; pull anything left behind by a pre-split
+// install across before the first read.
+const migrated = migrateLegacyData();
+ensureDataDirs();
 const config = loadConfig();
 const secrets = loadSecrets();
+migratePasswordEraConfig();
 
 const app = express();
 
-app.use(cookieParser());
+// Signed cookies — the trusted-device token must not be forgeable.
+app.use(cookieParser(secrets.sessionSecret));
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: false }));
 
@@ -40,7 +50,7 @@ app.use(session({
   secret: secrets.sessionSecret,
   resave: false,
   saveUninitialized: false,
-  cookie: { httpOnly: false, sameSite: false, secure: false, maxAge: 7 * 24 * 60 * 60 * 1000 },
+  cookie: { httpOnly: true, sameSite: 'lax', secure: false, maxAge: 30 * 24 * 60 * 60 * 1000 },
 }));
 
 // ── Streaming routes at root level (not under /api) ──────────────────────────
@@ -142,7 +152,9 @@ app.use(errorHandler);
 const PORT = Number(process.env.PORT || config.port || 8080);
 app.listen(PORT, () => {
   console.log(`LoStreamu running on http://0.0.0.0:${PORT}`);
+  console.log(`Data dir : ${DATA_DIR}`);
   console.log(`Media dir: ${config.mediaDir}`);
+  if (migrated.length) console.log(`Migrated into the data dir: ${migrated.join(', ')}`);
   rescan();
   initPreviews(); // wipe any stale scrub-preview sprites + start the idle sweep
   // Defer CPU work so the server can answer requests immediately on boot instead

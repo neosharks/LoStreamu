@@ -25,6 +25,8 @@ tar -czf "$OUT" \
   --exclude='./client/dist' \
   --exclude='./config.json' \
   --exclude='./secrets.json' \
+  --exclude='./users.json' \
+  --exclude='./users.json.*.bak' \
   --exclude='./meta-cache.json' \
   --exclude='./download-queue.json' \
   --exclude='./server.log' \

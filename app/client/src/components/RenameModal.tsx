@@ -8,7 +8,8 @@ interface RenameModalProps {
   onClose: () => void;
   label: string;
   current: string;
-  onConfirm: (name: string) => Promise<void>;
+  /** Resolves when the rename is done; the result itself is ignored. */
+  onConfirm: (name: string) => Promise<unknown>;
 }
 
 export function RenameModal({ open, onClose, label, current, onConfirm }: RenameModalProps) {

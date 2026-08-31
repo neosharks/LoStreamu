@@ -1,7 +1,8 @@
 import { useState, useRef } from 'react';
-import { Play, MoreVertical, Pencil, Trash2, Move, Download, Check } from 'lucide-react';
+import { Play, MoreVertical, Pencil, Trash2, Move, Download, Check, GripVertical } from 'lucide-react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { formatBytes, formatDuration, cn } from '@/lib/utils';
+import { useDragStore, DRAG_VIDEOS } from '@/stores/dragStore';
 import type { Video } from '@/types';
 
 // Touch devices have no hover, so the selection checkbox must be visible up-front
@@ -19,15 +20,28 @@ interface VideoCardProps {
   onDelete: (video: Video) => void;
   onMove: (video: Video) => void;
   selected?: boolean;
-  onToggleSelect?: (video: Video) => void;
+  /** `range` is set for a shift-click, which selects everything since the last pick. */
+  onToggleSelect?: (video: Video, opts?: { range?: boolean }) => void;
   /** True when the library is in bulk-select mode — a tap toggles instead of plays. */
   selectionMode?: boolean;
   /** Grid position — drives the staggered entrance animation. */
   index?: number;
+  /**
+   * Ids + label to carry when this card starts a drag. Dragging a selected card
+   * takes the whole selection with it; the parent decides, since only it knows
+   * what is selected.
+   */
+  dragPayload?: () => { ids: string[]; label: string; sourceFolders: string[] };
 }
 
-export function VideoCard({ video, onPlay, onRename, onDelete, onMove, selected, onToggleSelect, selectionMode, index = 0 }: VideoCardProps) {
+export function VideoCard({
+  video, onPlay, onRename, onDelete, onMove, selected, onToggleSelect, selectionMode,
+  index = 0, dragPayload,
+}: VideoCardProps) {
   const [thumbErr, setThumbErr] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  const startDrag = useDragStore(s => s.start);
+  const endDrag = useDragStore(s => s.end);
   // Set true when a long-press fires so the click it precedes doesn't also play.
   const longPressed = useRef(false);
   const pressTimer = useRef<ReturnType<typeof setTimeout>>();
@@ -42,20 +56,42 @@ export function VideoCard({ video, onPlay, onRename, onDelete, onMove, selected,
   };
   const cancelPress = () => clearTimeout(pressTimer.current);
 
-  const onThumbClick = () => {
+  const onThumbClick = (e: React.MouseEvent) => {
     if (longPressed.current) { longPressed.current = false; return; } // consumed by long-press
-    if (selectionMode && onToggleSelect) onToggleSelect(video);
-    else onPlay(video);
+    // Ctrl/Cmd or Shift click selects instead of playing, the way a file manager does.
+    if (onToggleSelect && (selectionMode || e.metaKey || e.ctrlKey || e.shiftKey)) {
+      onToggleSelect(video, { range: e.shiftKey });
+      return;
+    }
+    onPlay(video);
   };
+
+  // ── Drag to a folder ────────────────────────────────────────────────────────
+  const onDragStart = (e: React.DragEvent) => {
+    if (!dragPayload) return;
+    const payload = dragPayload();
+    setDragging(true);
+    startDrag({ kind: 'videos', ...payload });
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData(DRAG_VIDEOS, JSON.stringify(payload.ids));
+    // Plain text too, so dropping outside the app degrades to something sane.
+    e.dataTransfer.setData('text/plain', payload.label);
+  };
+
+  const onDragEnd = () => { setDragging(false); endDrag(); };
 
   const showCheckbox = !!onToggleSelect && (selected || selectionMode || IS_TOUCH);
 
   return (
     <div
       style={{ animationDelay: `${Math.min(index, 14) * 35}ms` }}
+      draggable={!!dragPayload}
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
       className={cn(
         'cv-card group relative flex flex-col overflow-hidden rounded-xl border bg-surface animate-fade-up transition-all duration-200 hover:-translate-y-1 hover:shadow-xl hover:shadow-accent/10',
         selected ? 'border-accent ring-2 ring-accent/30' : 'border-border hover:border-accent/50',
+        dragging && 'opacity-40',
       )}
     >
       {/* Thumbnail */}
@@ -92,7 +128,7 @@ export function VideoCard({ video, onPlay, onRename, onDelete, onMove, selected,
         {/* Selection checkbox (top-left) — bigger tap target on touch */}
         {onToggleSelect && (
           <button
-            onClick={e => { e.stopPropagation(); onToggleSelect(video); }}
+            onClick={e => { e.stopPropagation(); onToggleSelect(video, { range: e.shiftKey }); }}
             className={cn(
               'absolute left-2 top-2 flex items-center justify-center rounded-md border-2 transition-all',
               IS_TOUCH ? 'h-6 w-6' : 'h-5 w-5',
@@ -104,6 +140,16 @@ export function VideoCard({ video, onPlay, onRename, onDelete, onMove, selected,
           >
             {selected && <Check className="h-3.5 w-3.5" strokeWidth={3} />}
           </button>
+        )}
+
+        {/* Drag affordance — the gesture is invisible otherwise */}
+        {dragPayload && (
+          <span
+            title="Drag onto a folder to move"
+            className="pointer-events-none absolute right-2 top-2 hidden rounded-md bg-black/60 p-1 text-white/80 opacity-0 transition-opacity group-hover:opacity-100 sm:block"
+          >
+            <GripVertical className="h-3.5 w-3.5" />
+          </span>
         )}
 
         {/* Duration badge */}

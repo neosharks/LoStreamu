@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Play, Pause, SkipBack, SkipForward, ChevronLeft,
   Volume2, Volume1, VolumeX, Maximize, Minimize,
-  PictureInPicture2, Loader2, Trash2,
+  PictureInPicture2, Loader2, Trash2, Repeat, Gauge,
 } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -12,6 +12,31 @@ import { formatDuration, cn } from '@/lib/utils';
 
 const SEEK_STEP = 10;
 const CONTROLS_TIMEOUT = 3000;
+const WHEEL_STEP = 0.05;
+const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2] as const;
+
+// Volume, mute and speed are per-viewer preferences, not per-video: having to
+// re-set them on every clip is the single most irritating thing a player can do.
+const PREFS_KEY = 'player-prefs';
+
+interface PlayerPrefs { volume: number; muted: boolean; rate: number; loop: boolean }
+
+function loadPrefs(): PlayerPrefs {
+  const fallback: PlayerPrefs = { volume: 1, muted: false, rate: 1, loop: false };
+  try {
+    const raw = JSON.parse(localStorage.getItem(PREFS_KEY) || '{}');
+    return {
+      volume: typeof raw.volume === 'number' ? Math.min(1, Math.max(0, raw.volume)) : fallback.volume,
+      muted: !!raw.muted,
+      rate: SPEEDS.includes(raw.rate) ? raw.rate : fallback.rate,
+      loop: !!raw.loop,
+    };
+  } catch { return fallback; }
+}
+
+function savePrefs(prefs: PlayerPrefs): void {
+  try { localStorage.setItem(PREFS_KEY, JSON.stringify(prefs)); } catch {}
+}
 
 export function Player() {
   const { video, playlist, close, next, prev, removeCurrent } = usePlayerStore();
@@ -36,9 +61,16 @@ export function Player() {
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [bufferedEnd, setBufferedEnd] = useState(0);
-  const [volume, setVolumeState] = useState(1);
-  const [muted, setMuted] = useState(false);
+  const initialPrefs = useRef(loadPrefs());
+  const [volume, setVolumeState] = useState(initialPrefs.current.volume);
+  const [muted, setMuted] = useState(initialPrefs.current.muted);
+  const [rate, setRate] = useState<number>(initialPrefs.current.rate);
+  const [loop, setLoop] = useState(initialPrefs.current.loop);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [showSpeeds, setShowSpeeds] = useState(false);
+  // Transient centre overlay for volume / speed changes, so a wheel scroll or a
+  // key press shows what it did even when the controls are hidden.
+  const [osd, setOsd] = useState<{ text: string; icon: 'volume' | 'speed'; key: number } | null>(null);
 
   // UI state
   const [controlsVisible, setControlsVisible] = useState(true);
@@ -143,6 +175,11 @@ export function Player() {
       // Always start from the beginning (no resume-from-last-position).
       v.currentTime = 0;
     };
+    // A fresh <video> starts at full volume and 1x, so re-apply the viewer's
+    // saved preferences on every clip.
+    v.volume = volume;
+    v.muted = muted;
+    v.playbackRate = rate;
     const onTime = () => {
       setCurrentTime(v.currentTime);
       if (v.buffered.length) setBufferedEnd(v.buffered.end(v.buffered.length - 1));
@@ -155,6 +192,8 @@ export function Player() {
       setControlsVisible(true);
       if (hasNext) setTimeout(next, 800);
     };
+    // Browsers reset playbackRate when a new source loads.
+    const onRateFromElement = () => setRate(v.playbackRate);
     // Buffering spinner — crucial on flaky mobile networks.
     const onWaiting = () => setBuffering(true);
     const onPlaying = () => setBuffering(false);
@@ -164,6 +203,7 @@ export function Player() {
     v.addEventListener('play', onPlay);
     v.addEventListener('pause', onPause);
     v.addEventListener('volumechange', onVol);
+    v.addEventListener('ratechange', onRateFromElement);
     v.addEventListener('ended', onEnded);
     v.addEventListener('waiting', onWaiting);
     v.addEventListener('stalled', onWaiting);
@@ -176,6 +216,7 @@ export function Player() {
       v.removeEventListener('play', onPlay);
       v.removeEventListener('pause', onPause);
       v.removeEventListener('volumechange', onVol);
+      v.removeEventListener('ratechange', onRateFromElement);
       v.removeEventListener('ended', onEnded);
       v.removeEventListener('waiting', onWaiting);
       v.removeEventListener('stalled', onWaiting);
@@ -183,7 +224,21 @@ export function Player() {
       v.removeEventListener('playing', onPlaying);
       v.removeEventListener('canplay', onPlaying);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [video?.id, hasNext, next, revealControls]);
+
+  // Persist preferences whenever they change — one write, all four values.
+  useEffect(() => { savePrefs({ volume, muted, rate, loop }); }, [volume, muted, rate, loop]);
+
+  // `loop` is a plain element property; keep it in sync without re-binding events.
+  useEffect(() => { if (videoRef.current) videoRef.current.loop = loop; }, [loop, video?.id]);
+
+  // Clear the OSD after a beat.
+  useEffect(() => {
+    if (!osd) return;
+    const t = setTimeout(() => setOsd(o => (o?.key === osd.key ? null : o)), 900);
+    return () => clearTimeout(t);
+  }, [osd]);
 
   // ── Scrub-preview frames ──────────────────────────────────────────────────────
   // On play, tell the server to generate the hover-preview frames and poll until
@@ -252,10 +307,51 @@ export function Player() {
     revealControls();
   }, [revealControls]);
 
-  const setVol = useCallback((frac: number) => {
+  const flashOsd = useCallback((text: string, icon: 'volume' | 'speed') => {
+    setOsd({ text, icon, key: Date.now() });
+  }, []);
+
+  const setVol = useCallback((frac: number, announce = false) => {
     const v = videoRef.current; if (!v) return;
-    v.volume = Math.max(0, Math.min(1, frac));
-    v.muted = frac <= 0;
+    const next = Math.max(0, Math.min(1, frac));
+    v.volume = next;
+    v.muted = next <= 0;
+    if (announce) flashOsd(`${Math.round(next * 100)}%`, 'volume');
+  }, [flashOsd]);
+
+  // Scroll over the volume control to change it — the gesture people reach for
+  // first, and the one this player was missing.
+  const onVolWheel = useCallback((e: React.WheelEvent) => {
+    const v = videoRef.current; if (!v) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const dir = e.deltaY < 0 ? 1 : -1;
+    const base = v.muted ? 0 : v.volume;
+    setVol(base + dir * WHEEL_STEP, true);
+    revealControls();
+  }, [setVol, revealControls]);
+
+  const applyRate = useCallback((next: number) => {
+    const v = videoRef.current; if (!v) return;
+    const clamped = SPEEDS.reduce((best, s) => (Math.abs(s - next) < Math.abs(best - next) ? s : best), SPEEDS[0]);
+    v.playbackRate = clamped;
+    setRate(clamped);
+    setShowSpeeds(false);
+    flashOsd(`${clamped}×`, 'speed');
+    revealControls();
+  }, [flashOsd, revealControls]);
+
+  const stepRate = useCallback((dir: 1 | -1) => {
+    const i = SPEEDS.indexOf(rate as typeof SPEEDS[number]);
+    const next = SPEEDS[Math.min(SPEEDS.length - 1, Math.max(0, (i === -1 ? 2 : i) + dir))];
+    if (next != null) applyRate(next);
+  }, [rate, applyRate]);
+
+  const toggleLoop = useCallback(() => {
+    setLoop(l => {
+      toast.success(l ? 'Loop off' : 'Looping this video');
+      return !l;
+    });
   }, []);
 
   const toggleMute = useCallback(() => {
@@ -383,11 +479,14 @@ export function Player() {
         case ' ': case 'k': e.preventDefault(); togglePlay(); break;
         case 'ArrowLeft': case 'j': e.preventDefault(); seekBy(-SEEK_STEP); break;
         case 'ArrowRight': case 'l': e.preventDefault(); seekBy(SEEK_STEP); break;
-        case 'ArrowUp': e.preventDefault(); setVol((videoRef.current?.volume ?? 1) + 0.1); break;
-        case 'ArrowDown': e.preventDefault(); setVol((videoRef.current?.volume ?? 1) - 0.1); break;
+        case 'ArrowUp': e.preventDefault(); setVol((videoRef.current?.volume ?? 1) + 0.1, true); break;
+        case 'ArrowDown': e.preventDefault(); setVol((videoRef.current?.volume ?? 1) - 0.1, true); break;
         case 'm': case 'M': toggleMute(); break;
         case 'f': case 'F': toggleFullscreen(); break;
         case 'p': case 'P': togglePiP(); break;
+        case 'r': case 'R': toggleLoop(); break;
+        case '<': case ',': e.preventDefault(); stepRate(-1); break;
+        case '>': case '.': e.preventDefault(); stepRate(1); break;
         case 'Escape': close(); break;
         case 'n': case 'N': if (hasNext) next(); break;
         case 'b': case 'B': if (hasPrev) prev(); break;
@@ -397,7 +496,7 @@ export function Player() {
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [togglePlay, seekBy, setVol, toggleMute, toggleFullscreen, togglePiP, close, hasNext, hasPrev, next, prev, seekTo]);
+  }, [togglePlay, seekBy, setVol, toggleMute, toggleFullscreen, togglePiP, close, hasNext, hasPrev, next, prev, seekTo, stepRate, toggleLoop]);
 
   // Timestamp shown above the seek bar while hovering/scrubbing.
   const hoverTime = (seekHoverX ?? 0) * duration;
@@ -512,6 +611,22 @@ export function Player() {
               ? <SkipForward className="h-10 w-10 text-white" />
               : <SkipBack className="h-10 w-10 text-white" />}
             <span className="text-2xl font-bold text-white">{Math.abs(flash.delta)}s</span>
+          </div>
+        </div>
+      )}
+
+      {/* Volume / speed OSD */}
+      {osd && (
+        <div
+          key={osd.key}
+          className="pointer-events-none absolute inset-0 flex items-center justify-center"
+          style={{ animation: 'fadeInOut 0.9s ease forwards' }}
+        >
+          <div className="flex items-center gap-3 rounded-2xl bg-black/60 px-6 py-4 backdrop-blur-md">
+            {osd.icon === 'volume'
+              ? <VolumeIcon className="h-8 w-8 text-white" />
+              : <Gauge className="h-8 w-8 text-white" />}
+            <span className="text-2xl font-bold tabular-nums text-white">{osd.text}</span>
           </div>
         </div>
       )}
@@ -749,12 +864,13 @@ export function Player() {
 
           <div className="flex-1" />
 
-          {/* Volume — hidden on mobile (use device hardware buttons) */}
-          <div className="group/vol hidden sm:flex items-center gap-1.5">
+          {/* Volume — hidden on mobile (use device hardware buttons). The whole
+              cluster takes the wheel, so scrolling anywhere near it works. */}
+          <div className="group/vol hidden sm:flex items-center gap-1.5" onWheel={onVolWheel}>
             <button
               onClick={toggleMute}
               className="flex h-9 w-9 items-center justify-center rounded-full text-white hover:bg-white/10 transition-all"
-              title="Mute  (M)"
+              title="Mute (M) · scroll to change volume"
             >
               <VolumeIcon className="h-5 w-5" />
             </button>
@@ -762,6 +878,7 @@ export function Player() {
               ref={volBarRef}
               className="relative h-1.5 w-20 cursor-pointer rounded-full bg-white/20 opacity-0 group-hover/vol:opacity-100 transition-opacity duration-150"
               onMouseDown={onVolDown}
+              title="Scroll to change volume"
             >
               <div
                 className="absolute inset-y-0 left-0 rounded-full bg-white"
@@ -772,7 +889,58 @@ export function Player() {
                 style={{ left: `${muted ? 0 : volume * 100}%` }}
               />
             </div>
+            <span className="w-8 shrink-0 text-right text-xs font-mono tabular-nums text-white/50 opacity-0 group-hover/vol:opacity-100 transition-opacity">
+              {Math.round((muted ? 0 : volume) * 100)}
+            </span>
           </div>
+
+          {/* Playback speed */}
+          <div className="relative hidden sm:block">
+            <button
+              onClick={() => setShowSpeeds(o => !o)}
+              className={cn(
+                'flex h-9 items-center justify-center gap-1 rounded-full px-2.5 text-xs font-semibold tabular-nums transition-all hover:bg-white/10',
+                rate === 1 ? 'text-white' : 'text-accent-hover',
+              )}
+              title="Playback speed  ( , / . )"
+            >
+              <Gauge className="h-4 w-4" />
+              {rate}×
+            </button>
+            {showSpeeds && (
+              <>
+                {/* Click-away catcher */}
+                <div className="fixed inset-0 z-10" onClick={() => setShowSpeeds(false)} />
+                <div className="absolute bottom-full right-0 z-20 mb-2 w-24 overflow-hidden rounded-xl border border-white/15 bg-black/90 p-1 shadow-2xl backdrop-blur-md animate-fade-in">
+                  {SPEEDS.map(s => (
+                    <button
+                      key={s}
+                      onClick={() => applyRate(s)}
+                      className={cn(
+                        'flex w-full items-center justify-between rounded-lg px-3 py-1.5 text-xs tabular-nums transition-colors',
+                        s === rate ? 'bg-accent/25 font-semibold text-accent-hover' : 'text-white/80 hover:bg-white/10',
+                      )}
+                    >
+                      {s}×{s === 1 && <span className="text-[10px] text-white/40">normal</span>}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+
+          {/* Loop */}
+          <button
+            onClick={toggleLoop}
+            className={cn(
+              'hidden sm:flex h-9 w-9 items-center justify-center rounded-full transition-all hover:bg-white/10',
+              loop ? 'text-accent-hover' : 'text-white',
+            )}
+            title="Loop this video  (R)"
+            aria-pressed={loop}
+          >
+            <Repeat className="h-5 w-5" />
+          </button>
 
           {/* Mute icon — mobile only (no slider, just toggle) */}
           <button
@@ -806,7 +974,7 @@ export function Player() {
 
         {/* Keyboard hint bar — desktop only */}
         <p className="hidden sm:block text-center text-[10px] text-white/20 -mt-1">
-          Space/K · J/L ±10s · ↑↓ volume · M mute · F fullscreen · 0–9 seek% · N/B playlist · Esc close
+          Space/K · J/L ±10s · ↑↓ or scroll volume · , / . speed · M mute · R loop · F fullscreen · P PiP · 0–9 seek% · N/B playlist · Esc close
         </p>
 
         {/* Mobile touch hint — shown briefly then fades */}

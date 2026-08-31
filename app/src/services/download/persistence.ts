@@ -1,13 +1,11 @@
 import fs from 'fs';
-import path from 'path';
-import { APP_DIR } from '../../config';
+import { QUEUE_PATH } from '../../config';
 import type { QueueItem } from './types';
 import { isActive } from './types';
 
 // Queue persistence — a single JSON file so an accidental restart doesn't lose
 // queued/failed downloads. Writes are debounced to keep large-queue mutations cheap.
 
-const QUEUE_PATH = path.join(APP_DIR, 'download-queue.json');
 
 interface Persisted {
   version: 1;

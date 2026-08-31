@@ -5,6 +5,8 @@ app/dist/
 app/client/dist/
 app/config.json
 app/secrets.json
+app/users.json
+app/users.json.*.bak
 app/meta-cache.json
 app/download-queue.json
 app/*.mp4

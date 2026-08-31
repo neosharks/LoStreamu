@@ -9,7 +9,8 @@ interface ConfirmModalProps {
   description: string;
   confirmLabel?: string;
   danger?: boolean;
-  onConfirm: () => Promise<void>;
+  /** Resolves when the action is done; the result itself is ignored. */
+  onConfirm: () => Promise<unknown>;
 }
 
 export function ConfirmModal({ open, onClose, title, description, confirmLabel = 'Confirm', danger, onConfirm }: ConfirmModalProps) {

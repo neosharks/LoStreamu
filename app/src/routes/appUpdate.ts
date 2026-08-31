@@ -4,7 +4,7 @@ import path from 'path';
 import fs from 'fs';
 import type { Response } from 'express';
 import { requireAuth } from '../middleware/auth';
-import { APP_DIR, getConfig } from '../config';
+import { APP_DIR, DATA_DIR, getConfig } from '../config';
 
 const router = Router();
 
@@ -72,6 +72,15 @@ router.get('/app/update/stream', requireAuth, async (req, res) => {
     fs.rmSync(tarPath, { force: true });
     log(`✓ Extracted`);
 
+    // tar only adds files, so code deleted upstream survives in dist/. The
+    // password-era CLI is the one that matters: it would still run and write
+    // dead credential fields back into config.json.
+    const staleCli = path.join(APP_DIR, 'dist', 'cli');
+    if (fs.existsSync(staleCli)) {
+      fs.rmSync(staleCli, { recursive: true, force: true });
+      log(`✓ Removed superseded dist/cli`);
+    }
+
     log(`► Ensuring Chromium is installed...`);
     try {
       await runStep('sudo', ['apt-get', 'install', '-y', '--no-install-recommends', 'chromium'], '/', res);
@@ -118,6 +127,18 @@ router.get('/app/update/stream', requireAuth, async (req, res) => {
     log(`► Pruning dev dependencies...`);
     await runStep('npm', ['prune', '--production', '--no-fund', '--loglevel=error'], APP_DIR, res);
     log(`✓ Pruned`);
+
+    // The updater runs unprivileged: it can replace the app but cannot install
+    // the systemd unit that points the server at /var/lib/streamvault. Say so,
+    // rather than leaving the separation silently half-applied.
+    if (DATA_DIR === APP_DIR) {
+      log(``);
+      log(`ℹ Your videos and settings still live inside ${APP_DIR}.`);
+      log(`  To move them to /var/lib/streamvault — where reinstalling the app`);
+      log(`  cannot touch them — run this once on the Proxmox host:`);
+      log(`    pct exec <CTID> -- bash /opt/streamvault/install-lxc.sh`);
+      log(`  The server migrates the files itself on the next start.`);
+    }
 
     sseLog(res, 'Update complete — restarting service in 2 seconds…', 'done');
 

@@ -10,6 +10,10 @@ set -euo pipefail
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 APP_DIR="/opt/streamvault"
+# Videos, thumbnails, accounts and config live outside the app tree so a
+# reinstall or update can never delete them. The server reads SV_DATA_DIR
+# (set in the unit file) and migrates a pre-split install on first boot.
+DATA_DIR="/var/lib/streamvault"
 SVC_USER="streamvault"
 SVC_FILE="/etc/systemd/system/streamvault.service"
 LOG_FILE="/var/log/streamvault-install.log"
@@ -75,6 +79,7 @@ if [ "$SRC_DIR" != "$APP_DIR" ]; then
     --exclude=node_modules/ --exclude=dist/ \
     --exclude=client/node_modules/ --exclude=client/dist/ \
     --exclude=config.json --exclude=secrets.json --exclude=meta-cache.json \
+    --exclude=users.json --exclude=download-queue.json --exclude=cookies.txt \
     --exclude=media/ --exclude=thumbnails/ --exclude=server.log --exclude=yt-dlp \
     "$SRC_DIR/" "$APP_DIR/"
   COPIED=$(find "$APP_DIR" -not -path '*/node_modules/*' -not -path '*/dist/*' | wc -l)
@@ -252,26 +257,33 @@ ok "Sudoers rule written: streamvault can install chromium"
 
 # ── Step 10: Config and directories ──────────────────────────────────────────
 
-step "Setting up config and data directories..."
-mkdir -p "$APP_DIR/media" "$APP_DIR/thumbnails"
-ok "Directories ready: media/  thumbnails/"
+step "Setting up the data directory $DATA_DIR ..."
+mkdir -p "$DATA_DIR/media" "$DATA_DIR/thumbnails"
+ok "Directories ready: $DATA_DIR/media  $DATA_DIR/thumbnails"
 
-if [ ! -f "$APP_DIR/config.json" ]; then
-  cat >"$APP_DIR/config.json" <<JSON
+# An install made before the data-directory split keeps everything under
+# /opt/streamvault. Leave those files where they are — the server moves them
+# into $DATA_DIR on its first boot and logs what it moved.
+for legacy in config.json secrets.json users.json media thumbnails; do
+  if [ -e "$APP_DIR/$legacy" ]; then
+    info "Legacy $legacy found in $APP_DIR — the server will migrate it on first boot"
+  fi
+done
+
+if [ ! -f "$DATA_DIR/config.json" ] && [ ! -f "$APP_DIR/config.json" ]; then
+  cat >"$DATA_DIR/config.json" <<JSON
 {
   "port": 8080,
-  "email": "",
-  "passwordHash": "",
-  "mediaDir": "$APP_DIR/media"
+  "mediaDir": "$DATA_DIR/media"
 }
 JSON
-  ok "Created default config.json  (port 8080, media → $APP_DIR/media)"
+  ok "Created default config.json  (port 8080, media → $DATA_DIR/media)"
 else
   ok "config.json already exists — not overwritten"
 fi
 
-step "Setting ownership $SVC_USER:$SVC_USER on $APP_DIR ..."
-chown -R "$SVC_USER:$SVC_USER" "$APP_DIR"
+step "Setting ownership $SVC_USER:$SVC_USER on $APP_DIR and $DATA_DIR ..."
+chown -R "$SVC_USER:$SVC_USER" "$APP_DIR" "$DATA_DIR"
 ok "Ownership set"
 
 # Pre-create the npm log/cache directory so the streamvault user can write to it.
@@ -302,10 +314,13 @@ WorkingDirectory=$APP_DIR
 ExecStart=/usr/bin/node $APP_DIR/dist/index.js
 Restart=on-failure
 RestartSec=3
+Environment=HOME=/tmp
+Environment=npm_config_cache=/tmp/.npm-sv
+Environment=SV_DATA_DIR=$DATA_DIR
 NoNewPrivileges=true
 ProtectSystem=full
 PrivateTmp=true
-ReadWritePaths=$APP_DIR
+ReadWritePaths=$APP_DIR $DATA_DIR
 
 [Install]
 WantedBy=multi-user.target
@@ -343,6 +358,7 @@ echo "  ║       LoStreamu v2  —  Install complete  ✓     ║"
 echo "  ╠═══════════════════════════════════════════════════╣"
 printf "  ║  Time   : %-40s║\n" "${ELAPSED}s"
 printf "  ║  App dir: %-40s║\n" "$APP_DIR"
+printf "  ║  Data   : %-40s║\n" "$DATA_DIR"
 printf "  ║  Log    : %-40s║\n" "$LOG_FILE"
 echo "  ╠═══════════════════════════════════════════════════╣"
 printf "  ║  URL    : http://%-33s║\n" "${LXC_IP}:8080"
@@ -353,8 +369,9 @@ echo "    systemctl start streamvault"
 echo "    systemctl status streamvault"
 echo "    journalctl -u streamvault -f      # live logs"
 echo
-echo "  Open http://${LXC_IP}:8080 — you will be prompted to create"
-echo "  your account on the first visit."
+echo "  Open http://${LXC_IP}:8080 — the first visit asks you to create the"
+echo "  admin profile and choose a 6-digit PIN. Keep the PIN safe: there is no"
+echo "  reset link, and only that PIN (plus your email on a new device) gets in."
 echo
 echo "  Full install log saved to: $LOG_FILE"
 echo

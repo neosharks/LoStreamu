@@ -1,3 +1,30 @@
+export interface Me {
+  id: string;
+  name: string;
+  email: string;
+  avatar: string;
+  isAdmin: boolean;
+  /** Browsers currently trusted for PIN-only login. */
+  devices: number;
+}
+
+/** What the unauthenticated login screen is allowed to know about a profile. */
+export interface Profile {
+  id: string;
+  name: string;
+  avatar: string;
+  isAdmin: boolean;
+  /** True until this browser has been trusted — email is required alongside the PIN. */
+  needsEmail: boolean;
+  /** Seconds left on a lockout, 0 when the profile is usable. */
+  lockedFor: number;
+}
+
+export interface ManagedUser extends Me {
+  createdAt: number;
+  lockedFor: number;
+}
+
 export interface Video {
   id: string;
   name: string;

@@ -13,10 +13,13 @@ Restart=on-failure
 RestartSec=3
 Environment=HOME=/tmp
 Environment=npm_config_cache=/tmp/.npm-sv
+# Videos, thumbnails, accounts and config live here — outside the app tree, so
+# reinstalling or updating LoStreamu never touches them.
+Environment=SV_DATA_DIR=/var/lib/streamvault
 NoNewPrivileges=true
 ProtectSystem=full
 PrivateTmp=true
-ReadWritePaths=/opt/streamvault
+ReadWritePaths=/opt/streamvault /var/lib/streamvault
 
 [Install]
 WantedBy=multi-user.target

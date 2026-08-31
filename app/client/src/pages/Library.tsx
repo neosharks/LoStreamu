@@ -2,10 +2,14 @@ import { useState, useMemo, useEffect, useRef } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Film, Search, Move, Trash2, X, Shuffle, FolderOpen, Plus, Download, Settings, ListChecks } from 'lucide-react';
+import {
+  Film, Search, Move, Trash2, X, Shuffle, FolderOpen, Plus, Download, Settings,
+  ListChecks, FolderPlus, ChevronRight, Layers, CornerDownRight, Home,
+} from 'lucide-react';
 import { Header } from '@/components/Header';
 import { Sidebar } from '@/components/Sidebar';
 import { VideoCard } from '@/components/VideoCard';
+import { FolderCard } from '@/components/FolderCard';
 import { Button } from '@/components/ui/button';
 import { Player } from '@/components/Player';
 import { AddVideosModal } from '@/components/AddVideosModal';
@@ -17,8 +21,10 @@ import { videosApi } from '@/api/videos';
 import { downloadsApi } from '@/api/downloads';
 import { usePlayerStore } from '@/stores/playerStore';
 import { useDownloadsStore } from '@/stores/downloadsStore';
+import type { DragPayload } from '@/stores/dragStore';
+import { useFolderDrop } from '@/hooks/useFolderDrop';
 import { cn } from '@/lib/utils';
-import type { Video } from '@/types';
+import type { Video, FolderTree } from '@/types';
 
 type SortKey = 'addedAt' | 'addedAt-asc' | 'name' | 'name-desc' | 'size' | 'duration' | 'random';
 
@@ -31,6 +37,16 @@ function pseudoHash(id: string, seed: number): number {
 // Readable URL slug from a video name, e.g. "My Clip #2" -> "my-clip-2".
 function slugify(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'video';
+}
+
+/** Walks the folder tree to the node at `path`, or undefined if it's gone. */
+function findNode(node: FolderTree | undefined, path: string): FolderTree | undefined {
+  if (!node) return undefined;
+  if (node.path === path) return node;
+  for (const child of node.children) {
+    if (path === child.path || path.startsWith(child.path + '/')) return findNode(child, path);
+  }
+  return undefined;
 }
 
 const SORT_KEYS: readonly SortKey[] = [
@@ -91,6 +107,11 @@ export function Library() {
   const reshuffle = () =>
     patchParams(p => { p.delete('sort'); p.set('seed', String(randomSeed())); });
 
+  // Recursive by default (what the library has always shown); flip to see only
+  // what sits directly in this folder, which is what makes organising legible.
+  const deep = searchParams.get('deep') !== '0';
+  const setDeep = (on: boolean) => patchParams(p => { on ? p.delete('deep') : p.set('deep', '0'); });
+
   // Pin the shuffle seed into the URL on first load so a refresh keeps the order.
   useEffect(() => {
     if (sort === 'random' && !searchParams.get('seed')) {
@@ -118,10 +139,17 @@ export function Library() {
   const [moveFolderPath, setMoveFolderPath] = useState<string | null>(null);
 
   const { data: videos = [], isLoading } = useQuery({
-    queryKey: ['videos', folder],
-    queryFn: () => videosApi.list(folder),
+    queryKey: ['videos', folder, deep],
+    queryFn: () => videosApi.list(folder, false, deep),
     staleTime: 10_000,
   });
+
+  // Shared with the sidebar via the query cache — one fetch, two consumers.
+  const { data: tree } = useQuery({ queryKey: ['tree'], queryFn: videosApi.tree });
+  const currentNode = useMemo(() => findNode(tree, folder), [tree, folder]);
+  const subfolders = currentNode?.children ?? [];
+  // How many videos the "this folder only" filter is hiding from view.
+  const hiddenBySubfolderFilter = subfolders.reduce((n, c) => n + c.totalCount, 0);
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ['videos'] });
@@ -136,13 +164,36 @@ export function Library() {
 
   const deleteMutation = useMutation({
     mutationFn: (ids: string[]) => videosApi.delete(ids),
-    onSuccess: () => { toast.success('Deleted'); setSelectedIds(new Set()); invalidate(); },
+    onSuccess: r => {
+      if (r.failed.length) toast.warning(`Deleted ${r.deleted} · ${r.failed.length} could not be removed`);
+      else toast.success(r.deleted === 1 ? 'Deleted' : `Deleted ${r.deleted} videos`);
+      setSelectedIds(new Set());
+      invalidate();
+    },
     onError: () => toast.error('Delete failed'),
   });
 
   const moveMutation = useMutation({
     mutationFn: ({ ids, dest }: { ids: string[]; dest: string }) => videosApi.move(ids, dest),
-    onSuccess: () => { toast.success('Moved'); setSelectedIds(new Set()); invalidate(); },
+    // The server reports each outcome separately: a name clash used to look
+    // exactly like a successful move that did nothing.
+    onSuccess: (r, { dest }) => {
+      const where = dest ? `"${folderDisplayName(dest)}"` : 'the library root';
+      if (r.moved) {
+        const extra = r.conflicts.length ? ` · ${r.conflicts.length} skipped, name already there` : '';
+        toast.success(`Moved ${r.moved} to ${where}${extra}`);
+      } else if (r.conflicts.length) {
+        toast.error(`Already a file called "${r.conflicts[0]}" in ${where}`);
+      } else if (r.alreadyThere) {
+        toast.info(`Already in ${where}`);
+      } else if (r.missing) {
+        toast.warning('Those videos have already moved — refreshing');
+      } else {
+        toast.error('Nothing was moved');
+      }
+      setSelectedIds(new Set());
+      invalidate();
+    },
     onError: () => toast.error('Move failed'),
   });
 
@@ -187,12 +238,48 @@ export function Library() {
     return arr;
   }, [videos, search, sort, shuffleSeed]);
 
-  const toggleSelect = (video: Video) =>
+  // Anchor for shift-click ranges — the last card picked without shift.
+  const anchorIndex = useRef<number | null>(null);
+
+  const toggleSelect = (video: Video, opts?: { range?: boolean }) => {
+    const index = filtered.findIndex(v => v.id === video.id);
+    if (opts?.range && anchorIndex.current !== null && index >= 0) {
+      const [from, to] = [anchorIndex.current, index].sort((a, b) => a - b);
+      setSelectedIds(prev => {
+        const next = new Set(prev);
+        for (let i = from; i <= to; i++) {
+          const item = filtered[i];
+          if (item) next.add(item.id);
+        }
+        return next;
+      });
+      return;
+    }
+    anchorIndex.current = index;
     setSelectedIds(prev => {
       const next = new Set(prev);
       next.has(video.id) ? next.delete(video.id) : next.add(video.id);
       return next;
     });
+  };
+
+  // Dragging a selected card takes the whole selection; dragging an unselected
+  // one takes just that card, which is what every file manager does.
+  const dragPayloadFor = (video: Video) => {
+    const items = selectedIds.has(video.id)
+      ? filtered.filter(v => selectedIds.has(v.id))
+      : [video];
+    return {
+      ids: items.map(v => v.id),
+      label: items.length === 1 ? items[0]!.name : `${items.length} videos`,
+      sourceFolders: [...new Set(items.map(v => v.folder))],
+    };
+  };
+
+  const handleDropInto = (payload: DragPayload, dest: string) => {
+    if (payload.kind === 'videos') moveMutation.mutate({ ids: payload.ids, dest });
+    else moveFolderMutation.mutate({ folder: payload.path, dest });
+  };
 
   // Select-all operates on the CURRENT view (folder + search), so it works the
   // same inside a folder as it does across the whole library.
@@ -201,6 +288,31 @@ export function Library() {
     setSelectedIds(allSelected ? new Set() : new Set(filtered.map(v => v.id)));
 
   const handlePlay = (video: Video) => openPlayer(video, filtered);
+
+  // ── Library keyboard shortcuts ─────────────────────────────────────────────
+  // Only while the player is closed — it owns the keyboard when open.
+  useEffect(() => {
+    if (nowPlaying) return;
+    const onKey = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      if ((e.metaKey || e.ctrlKey) && (e.key === 'a' || e.key === 'A')) {
+        e.preventDefault();
+        toggleSelectAll();
+      } else if (e.key === 'Escape' && isSelecting) {
+        setSelectedIds(new Set());
+      } else if ((e.key === 'Delete' || e.key === 'Backspace') && isSelecting) {
+        e.preventDefault();
+        setDeleteVideos(filtered.filter(v => selectedIds.has(v.id)));
+      } else if ((e.key === 'm' || e.key === 'M') && isSelecting) {
+        e.preventDefault();
+        setMoveVideos(filtered.filter(v => selectedIds.has(v.id)));
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nowPlaying, isSelecting, filtered, selectedIds]);
 
   // ── Player ↔ URL sync ──────────────────────────────────────────────────────
   // URL → store: open the player from /watch/:id on load, refresh, or back/forward.
@@ -285,6 +397,7 @@ export function Library() {
           onRenameFolder={f => setRenameFolderPath(f)}
           onDeleteFolder={f => setDeleteFolderPath(f)}
           onMoveFolder={f => setMoveFolderPath(f)}
+          onDropInto={handleDropInto}
           mobileOpen={mobileSidebarOpen}
           onMobileClose={() => setMobileSidebarOpen(false)}
         />
@@ -292,12 +405,23 @@ export function Library() {
         <main className="flex-1 overflow-y-auto">
           {/* Extra bottom padding on mobile to clear the bottom nav */}
           <div className="p-4 sm:p-6 pb-24 lg:pb-6">
+            {/* Breadcrumbs — every crumb is also a drop target, so dragging a
+                file up a level is the same gesture as dragging it down one. */}
+            <Breadcrumbs folder={folder} onSelect={setFolder} onDropInto={handleDropInto} />
+
             {/* Toolbar */}
-            <div className="mb-4 flex items-center justify-between gap-3">
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-2">
                 <h2 className="text-sm font-semibold text-text-primary">
-                  {folder || 'All videos'} · {filtered.length}
+                  {filtered.length} {filtered.length === 1 ? 'video' : 'videos'}
                 </h2>
+                <button
+                  onClick={() => setCreateFolderParent(folder)}
+                  title="New folder here"
+                  className="flex items-center gap-1.5 rounded-lg border border-border bg-elevated px-2.5 py-1 text-xs font-medium text-text-muted transition-colors hover:bg-border hover:text-text-primary"
+                >
+                  <FolderPlus className="h-3.5 w-3.5" /> New folder
+                </button>
                 {filtered.length > 0 && (
                   <button
                     onClick={toggleSelectAll}
@@ -315,6 +439,19 @@ export function Library() {
                 )}
               </div>
               <div className="flex items-center gap-1.5">
+                <button
+                  onClick={() => setDeep(!deep)}
+                  title={deep ? 'Showing videos in subfolders too' : 'Showing only this folder'}
+                  className={cn(
+                    'flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-medium transition-colors',
+                    deep
+                      ? 'border-accent/40 bg-accent-light text-accent-hover'
+                      : 'border-border bg-elevated text-text-muted hover:bg-border hover:text-text-primary',
+                  )}
+                >
+                  <Layers className="h-3.5 w-3.5" />
+                  {deep ? 'Incl. subfolders' : 'This folder only'}
+                </button>
                 <label className="text-xs text-text-muted">Sort</label>
                 <select
                   value={sort}
@@ -346,6 +483,9 @@ export function Library() {
               <div className="mb-4 flex items-center gap-3 rounded-xl border border-accent/30 bg-accent-light px-4 py-2.5">
                 <span className="flex-1 text-sm font-medium text-accent-hover">
                   {selectedIds.size} selected
+                  <span className="ml-2 hidden text-xs font-normal text-accent-hover/60 lg:inline">
+                    drag onto a folder to move · shift-click for a range
+                  </span>
                 </span>
                 <button
                   onClick={toggleSelectAll}
@@ -371,6 +511,29 @@ export function Library() {
                 >
                   <X className="h-4 w-4" />
                 </button>
+              </div>
+            )}
+
+            {/* Subfolders — navigation and drop targets in one */}
+            {subfolders.length > 0 && (
+              <div className="mb-5">
+                <p className="mb-2 text-xs font-medium uppercase tracking-wider text-text-subtle">
+                  Folders · {subfolders.length}
+                </p>
+                <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+                  {subfolders.map(node => (
+                    <FolderCard
+                      key={node.path}
+                      node={node}
+                      onOpen={setFolder}
+                      onRename={setRenameFolderPath}
+                      onDelete={setDeleteFolderPath}
+                      onMove={setMoveFolderPath}
+                      onNewSubfolder={setCreateFolderParent}
+                      onDropInto={handleDropInto}
+                    />
+                  ))}
+                </div>
               </div>
             )}
 
@@ -402,6 +565,29 @@ export function Library() {
                     <p className="text-base font-semibold text-text-primary">No results for "{search}"</p>
                     <p className="mt-1 text-sm text-text-muted">Try a different search term</p>
                   </>
+                ) : !deep && hiddenBySubfolderFilter > 0 ? (
+                  // Nothing sits directly here, but the subfolders are full — say
+                  // so instead of claiming the library is empty.
+                  <>
+                    <p className="text-base font-semibold text-text-primary">
+                      No videos directly in {folder ? `"${folderDisplayName(folder)}"` : 'the library root'}
+                    </p>
+                    <p className="mt-1 text-sm text-text-muted">
+                      {hiddenBySubfolderFilter} {hiddenBySubfolderFilter === 1 ? 'video is' : 'videos are'} inside the folders above.
+                    </p>
+                    <Button variant="secondary" className="mt-5" onClick={() => setDeep(true)}>
+                      <Layers className="h-4 w-4" /> Include subfolders
+                    </Button>
+                  </>
+                ) : folder ? (
+                  <>
+                    <p className="text-base font-semibold text-text-primary">
+                      Nothing in "{folderDisplayName(folder)}" yet
+                    </p>
+                    <p className="mt-1 text-sm text-text-muted">
+                      Drag videos onto this folder to fill it.
+                    </p>
+                  </>
                 ) : (
                   <>
                     <p className="text-base font-semibold text-text-primary">Your library is empty</p>
@@ -426,6 +612,7 @@ export function Library() {
                     selected={selectedIds.has(video.id)}
                     onToggleSelect={toggleSelect}
                     selectionMode={isSelecting}
+                    dragPayload={() => dragPayloadFor(video)}
                   />
                 ))}
               </div>
@@ -531,5 +718,68 @@ export function Library() {
         onConfirm={dest => moveFolderMutation.mutateAsync({ folder: moveFolderPath!, dest })}
       />
     </div>
+  );
+}
+
+// ── Breadcrumbs ───────────────────────────────────────────────────────────────
+// The folder path as a trail of drop targets: dragging a file to a parent folder
+// is the same gesture as dragging it into a child.
+
+function Crumb({ path, label, icon: Icon, current, onSelect, onDropInto }: {
+  path: string;
+  label: string;
+  icon?: typeof Home;
+  current: boolean;
+  onSelect: (p: string) => void;
+  onDropInto: (payload: DragPayload, dest: string) => void;
+}) {
+  const drop = useFolderDrop(path, onDropInto);
+  return (
+    <button
+      onClick={() => onSelect(path)}
+      {...drop.handlers}
+      className={cn(
+        'flex max-w-[12rem] items-center gap-1.5 truncate rounded-lg px-2 py-1 transition-colors',
+        drop.active
+          ? 'bg-accent-light text-accent-hover ring-1 ring-accent/60'
+          : current
+          ? 'text-text-primary'
+          : 'text-text-muted hover:bg-elevated hover:text-text-primary',
+      )}
+    >
+      {drop.active
+        ? <CornerDownRight className="h-3.5 w-3.5 shrink-0 text-accent" />
+        : Icon && <Icon className="h-3.5 w-3.5 shrink-0" />}
+      <span className="truncate">{label}</span>
+    </button>
+  );
+}
+
+function Breadcrumbs({ folder, onSelect, onDropInto }: {
+  folder: string;
+  onSelect: (p: string) => void;
+  onDropInto: (payload: DragPayload, dest: string) => void;
+}) {
+  const parts = folder ? folder.split('/') : [];
+  return (
+    <nav className="mb-3 flex flex-wrap items-center gap-0.5 text-sm" aria-label="Folder path">
+      <Crumb
+        path="" label="All videos" icon={Home}
+        current={!folder} onSelect={onSelect} onDropInto={onDropInto}
+      />
+      {parts.map((part, i) => {
+        const path = parts.slice(0, i + 1).join('/');
+        return (
+          <span key={path} className="flex items-center gap-0.5">
+            <ChevronRight className="h-3.5 w-3.5 shrink-0 text-text-subtle" />
+            <Crumb
+              path={path} label={part}
+              current={i === parts.length - 1}
+              onSelect={onSelect} onDropInto={onDropInto}
+            />
+          </span>
+        );
+      })}
+    </nav>
   );
 }

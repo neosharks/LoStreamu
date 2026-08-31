@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import {
-  getLibrary, getMediaRoot, rescan, buildMeta, pruneOrphanMeta, pruneEmptyDirs,
+  getLibrary, getMediaRoot, rescan, buildMeta, pruneOrphanMeta,
 } from './library';
 import { cleanThumbnails, generateThumb } from './media';
 
@@ -10,7 +10,8 @@ import { cleanThumbnails, generateThumb } from './media';
 //   • orphaned / legacy thumbnail files (video deleted, or old sprite/vtt)
 //   • yt-dlp temp & partial-download leftovers from cancelled/failed downloads
 //   • meta-cache entries for videos that no longer exist
-//   • empty folders left behind after files are removed
+//   • empty folders — moves and deletes deliberately leave them behind so that
+//     organising never makes a folder vanish under you; this is where they go
 // The yt-dlp download archive (.downloaded.txt) is intentional and preserved.
 
 const JUNK_EXTS = new Set(['.part', '.ytdl', '.temp', '.tmp', '.download']);
@@ -28,6 +29,7 @@ export interface CleanupResult {
   thumbnails: { removedFiles: number; freedBytes: number };
   tempFiles: { removedFiles: number; freedBytes: number };
   metaEntries: number;
+  emptyFolders: number;
 }
 
 export function cleanJunk(): CleanupResult {
@@ -43,7 +45,6 @@ export function cleanJunk(): CleanupResult {
   const root = getMediaRoot();
   let tRemoved = 0;
   let tBytes = 0;
-  const touchedDirs = new Set<string>();
   const walk = (dir: string): void => {
     let entries: fs.Dirent[];
     try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
@@ -55,7 +56,6 @@ export function cleanJunk(): CleanupResult {
         tBytes += fs.statSync(abs).size;
         fs.rmSync(abs, { force: true });
         tRemoved++;
-        touchedDirs.add(dir);
       } catch { /* already gone */ }
     }
   };
@@ -64,8 +64,8 @@ export function cleanJunk(): CleanupResult {
   // 3. Stale meta-cache entries.
   const metaEntries = pruneOrphanMeta(validIds);
 
-  // 4. Empty folders left behind by removed junk.
-  for (const d of touchedDirs) pruneEmptyDirs(d);
+  // 4. Every empty folder under the media root, deepest first.
+  const emptyFolders = sweepEmptyDirs(root);
 
   return {
     removedFiles: thumbnails.removedFiles + tRemoved,
@@ -73,7 +73,25 @@ export function cleanJunk(): CleanupResult {
     thumbnails,
     tempFiles: { removedFiles: tRemoved, freedBytes: tBytes },
     metaEntries,
+    emptyFolders,
   };
+}
+
+// Depth-first so a folder whose only content was empty folders goes too. The
+// media root itself is always kept.
+function sweepEmptyDirs(root: string): number {
+  let removed = 0;
+  const visit = (dir: string): void => {
+    let entries: fs.Dirent[];
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) if (e.isDirectory()) visit(path.join(dir, e.name));
+    if (dir === root) return;
+    try {
+      if (fs.readdirSync(dir).length === 0) { fs.rmdirSync(dir); removed++; }
+    } catch {}
+  };
+  visit(root);
+  return removed;
 }
 
 // ── Thumbnail regeneration ─────────────────────────────────────────────────────

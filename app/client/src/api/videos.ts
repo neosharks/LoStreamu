@@ -27,9 +27,29 @@ export const previewApi = {
   remove: (id: string) => api.delete(`/preview/${id}`).then(r => r.data).catch(() => {}),
 };
 
+/** Outcome of a bulk move — a name clash used to look like nothing happened. */
+export interface MoveResult {
+  ok: boolean;
+  moved: number;
+  alreadyThere: number;
+  /** Ids the server no longer knows — the library view was stale. */
+  missing: number;
+  conflicts: string[];
+  failed: string[];
+}
+
+export interface DeleteResult {
+  ok: boolean;
+  deleted: number;
+  missing: number;
+  failed: string[];
+}
+
 export const videosApi = {
-  list: (folder = '', all = false) =>
-    api.get<Video[]>('/videos', { params: { folder, ...(all && { all: '1' }) } }).then(r => r.data),
+  list: (folder = '', all = false, deep = true) =>
+    api.get<Video[]>('/videos', {
+      params: { folder, ...(all && { all: '1' }), ...(deep ? {} : { deep: '0' }) },
+    }).then(r => r.data),
 
   info: (id: string) => api.get<Video>(`/videos/${id}/info`).then(r => r.data),
 
@@ -45,13 +65,13 @@ export const videosApi = {
     api.patch(`/videos/${id}`, { name }).then(r => r.data),
 
   delete: (ids: string[]) =>
-    api.delete('/videos', { data: { ids } }).then(r => r.data),
+    api.delete<DeleteResult>('/videos', { data: { ids } }).then(r => r.data),
 
   move: (ids: string[], folder: string) =>
-    api.post('/videos/move', { ids, folder }).then(r => r.data),
+    api.post<MoveResult>('/videos/move', { ids, folder }).then(r => r.data),
 
   createFolder: (name: string, parent = '') =>
-    api.post('/folders', { name, parent }).then(r => r.data),
+    api.post<{ ok: boolean; folder: string }>('/folders', { name, parent }).then(r => r.data),
 
   renameFolder: (folder: string, name: string) =>
     api.patch('/folders', { folder, name }).then(r => r.data),

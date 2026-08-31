@@ -1,11 +1,15 @@
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
-import { getConfig, VIDEO_EXTENSIONS, APP_DIR } from '../config';
+import { getConfig, VIDEO_EXTENSIONS, META_CACHE_PATH } from '../config';
 import { runMedia } from './exec';
 import type { VideoItem, FolderTree } from '../types';
 
 let library: VideoItem[] = [];
+// Every directory under the media root, relative and slash-separated. Recorded
+// during the scan so the folder tree can show folders that hold no videos yet —
+// a folder you just created has to appear, or organising is impossible.
+let folders: string[] = [];
 let metaCache: Record<string, Partial<VideoItem>> = {};
 
 export function getLibrary(): VideoItem[] {
@@ -17,7 +21,7 @@ export function getMediaRoot(): string {
 }
 
 function metaCachePath(): string {
-  return path.join(APP_DIR, 'meta-cache.json');
+  return META_CACHE_PATH;
 }
 
 function loadMetaCache(): void {
@@ -35,14 +39,20 @@ export function makeVideoId(relPath: string): string {
   return crypto.createHash('sha1').update(relPath).digest('hex').slice(0, 16);
 }
 
-function walkDir(dir: string, mediaRoot: string): VideoItem[] {
+function relFolder(mediaRoot: string, abs: string): string {
+  const rel = path.relative(mediaRoot, abs);
+  return rel === '.' ? '' : rel.split(path.sep).join('/');
+}
+
+function walkDir(dir: string, mediaRoot: string, dirs: string[]): VideoItem[] {
   const items: VideoItem[] = [];
   let entries: fs.Dirent[];
   try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return items; }
   for (const e of entries) {
     const abs = path.join(dir, e.name);
     if (e.isDirectory()) {
-      items.push(...walkDir(abs, mediaRoot));
+      dirs.push(relFolder(mediaRoot, abs));
+      items.push(...walkDir(abs, mediaRoot, dirs));
     } else if (e.isFile()) {
       const ext = path.extname(e.name).toLowerCase();
       if (!VIDEO_EXTENSIONS.has(ext)) continue;
@@ -52,14 +62,14 @@ function walkDir(dir: string, mediaRoot: string): VideoItem[] {
       // Skip zero-byte files — a truncated/failed download leaves an empty
       // container that would otherwise appear as an unplayable library entry.
       if (stat.size === 0) continue;
-      const folder = path.relative(mediaRoot, path.dirname(abs));
+      const folder = relFolder(mediaRoot, path.dirname(abs));
       items.push({
         id,
         name: path.basename(e.name, ext),
         ext,
         relPath: rel,
         absPath: abs,
-        folder: folder === '.' ? '' : folder,
+        folder,
         size: stat.size,
         addedAt: Math.floor(stat.birthtimeMs || stat.mtimeMs),
         ...(metaCache[id] || {}),
@@ -73,7 +83,13 @@ export function rescan(): void {
   const root = getMediaRoot();
   try { fs.mkdirSync(root, { recursive: true }); } catch {}
   loadMetaCache();
-  library = walkDir(root, root);
+  const dirs: string[] = [];
+  library = walkDir(root, root, dirs);
+  folders = dirs.sort();
+}
+
+export function getFolders(): string[] {
+  return folders;
 }
 
 export async function buildMeta(): Promise<void> {
@@ -105,66 +121,46 @@ export function findById(id: string): VideoItem | undefined {
   return library.find(v => v.id === id);
 }
 
-// All folders on disk (including empty ones), as sorted relative paths. The
-// folder tree is derived from video locations and omits empty folders, so this
-// filesystem walk is what download destination pickers should use.
+// All folders on disk (including empty ones), as sorted relative paths — what
+// download destination pickers list. Recorded by the last rescan().
 export function listAllFolders(): string[] {
-  const root = getMediaRoot();
-  const out: string[] = [];
-  const walk = (dir: string, rel: string): void => {
-    let entries: fs.Dirent[];
-    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
-    for (const e of entries) {
-      if (!e.isDirectory()) continue;
-      const childRel = rel ? `${rel}/${e.name}` : e.name;
-      out.push(childRel);
-      walk(path.join(dir, e.name), childRel);
-    }
-  };
-  walk(root, '');
-  return out.sort();
+  return folders;
 }
 
 export function buildTree(): FolderTree {
-  const root = getMediaRoot();
   const nodeMap = new Map<string, FolderTree>();
 
   function getNode(folderPath: string): FolderTree {
-    if (nodeMap.has(folderPath)) return nodeMap.get(folderPath)!;
+    const existing = nodeMap.get(folderPath);
+    if (existing) return existing;
     const node: FolderTree = {
-      name: folderPath === '' ? '' : path.basename(folderPath),
+      name: folderPath === '' ? '' : folderPath.slice(folderPath.lastIndexOf('/') + 1),
       path: folderPath,
       videoCount: 0,
       totalCount: 0,
       children: [],
     };
     nodeMap.set(folderPath, node);
+    // Link into the parent, creating any missing ancestors on the way up.
+    if (folderPath !== '') {
+      const cut = folderPath.lastIndexOf('/');
+      const parent = getNode(cut === -1 ? '' : folderPath.slice(0, cut));
+      parent.children.push(node);
+    }
     return node;
   }
 
-  for (const v of library) {
-    const parts = v.folder ? v.folder.split(path.sep) : [];
-    let cur = '';
-    getNode('');
-    for (const part of parts) {
-      const parent = cur;
-      cur = cur ? `${cur}/${part}` : part;
-      const node = getNode(cur);
-      const parentNode = getNode(parent);
-      if (!parentNode.children.find(c => c.path === cur)) {
-        parentNode.children.push(node);
-      }
-    }
-    getNode(v.folder).videoCount++;
-  }
+  const tree = getNode('');
+  for (const folder of folders) getNode(folder);
+  for (const v of library) getNode(v.folder).videoCount++;
 
-  function propagate(node: FolderTree): number {
+  function finish(node: FolderTree): number {
+    node.children.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
     node.totalCount = node.videoCount;
-    for (const child of node.children) node.totalCount += propagate(child);
+    for (const child of node.children) node.totalCount += finish(child);
     return node.totalCount;
   }
-  const tree = getNode('');
-  propagate(tree);
+  finish(tree);
   return tree;
 }
 
@@ -195,15 +191,3 @@ export function safePath(relPath: string): string | null {
   return abs;
 }
 
-export function pruneEmptyDirs(dir: string): void {
-  const root = getMediaRoot();
-  let cur = dir;
-  while (cur !== root && cur.startsWith(root)) {
-    try {
-      const entries = fs.readdirSync(cur);
-      if (entries.length > 0) break;
-      fs.rmdirSync(cur);
-      cur = path.dirname(cur);
-    } catch { break; }
-  }
-}

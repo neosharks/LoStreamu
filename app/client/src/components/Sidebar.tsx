@@ -1,10 +1,12 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
-import { Folder, FolderOpen, ChevronRight, Film, Plus, Pencil, Trash2, Move, X, MoreVertical, LogOut, Loader2 } from 'lucide-react';
+import { Folder, FolderOpen, ChevronRight, Film, Plus, Pencil, Trash2, Move, X, MoreVertical, LogOut, Loader2, CornerDownRight } from 'lucide-react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { videosApi } from '@/api/videos';
 import { authApi } from '@/api/settings';
 import { cn, formatBytes } from '@/lib/utils';
+import { useDragStore, DRAG_FOLDER, type DragPayload } from '@/stores/dragStore';
+import { useFolderDrop } from '@/hooks/useFolderDrop';
 import type { FolderTree } from '@/types';
 
 // Library stats + sign-out, pinned at the bottom of the folder list. Lives here
@@ -79,6 +81,8 @@ interface SidebarProps {
   onRenameFolder: (folder: string) => void;
   onDeleteFolder: (folder: string) => void;
   onMoveFolder: (folder: string) => void;
+  /** Fired when videos or a folder are dropped onto a folder in the tree. */
+  onDropInto: (payload: DragPayload, dest: string) => void;
   mobileOpen?: boolean;
   onMobileClose?: () => void;
 }
@@ -92,24 +96,55 @@ interface TreeNodeProps {
   onRenameFolder: (folder: string) => void;
   onDeleteFolder: (folder: string) => void;
   onMoveFolder: (folder: string) => void;
+  onDropInto: (payload: DragPayload, dest: string) => void;
 }
 
-function TreeNode({ node, depth, selected, onSelect, onCreateFolder, onRenameFolder, onDeleteFolder, onMoveFolder }: TreeNodeProps) {
+function TreeNode({ node, depth, selected, onSelect, onCreateFolder, onRenameFolder, onDeleteFolder, onMoveFolder, onDropInto }: TreeNodeProps) {
   const [open, setOpen] = useState(depth === 0);
   const isRoot = node.path === '';
   const isSelected = node.path === selected;
   const hasChildren = node.children.length > 0;
+  const drop = useFolderDrop(node.path, onDropInto);
+  const startDrag = useDragStore(s => s.start);
+  const endDrag = useDragStore(s => s.end);
+  const dragPayload = useDragStore(s => s.payload);
+  const beingDragged = dragPayload?.kind === 'folder' && dragPayload.path === node.path;
+
+  // Hovering a collapsed folder mid-drag opens it, so nested folders can be
+  // reached without dropping first — the spring-loaded behaviour of a file manager.
+  useEffect(() => {
+    if (!drop.active || open || !hasChildren) return;
+    const t = setTimeout(() => setOpen(true), 600);
+    return () => clearTimeout(t);
+  }, [drop.active, open, hasChildren]);
 
   return (
     <div>
-      <div className="group/node relative flex items-center">
+      <div
+        {...drop.handlers}
+        className={cn(
+          'group/node relative flex items-center rounded-lg transition-colors',
+          drop.active && 'bg-accent-light ring-1 ring-accent/60',
+          beingDragged && 'opacity-40',
+        )}
+      >
         <button
           onClick={() => { onSelect(node.path); if (hasChildren) setOpen(o => !o); }}
+          draggable={!isRoot}
+          onDragStart={e => {
+            if (isRoot) return;
+            startDrag({ kind: 'folder', path: node.path, label: node.name });
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData(DRAG_FOLDER, node.path);
+            e.dataTransfer.setData('text/plain', node.name);
+          }}
+          onDragEnd={endDrag}
           className={cn(
             'flex min-w-0 flex-1 items-center gap-2 rounded-lg py-1.5 pr-1 text-left text-sm transition-colors',
-            isSelected
+            isSelected && !drop.active
               ? 'bg-accent-light text-accent-hover font-medium'
               : 'text-text-muted hover:text-text-primary hover:bg-elevated',
+            drop.active && 'text-accent-hover font-medium',
           )}
           style={{ paddingLeft: `${(depth + 1) * 12}px` }}
         >
@@ -118,7 +153,9 @@ function TreeNode({ node, depth, selected, onSelect, onCreateFolder, onRenameFol
           ) : (
             <span className="h-3 w-3 shrink-0" />
           )}
-          {isRoot ? (
+          {drop.active ? (
+            <CornerDownRight className="h-3.5 w-3.5 shrink-0 text-accent" />
+          ) : isRoot ? (
             <Film className="h-3.5 w-3.5 shrink-0" />
           ) : open && hasChildren ? (
             <FolderOpen className="h-3.5 w-3.5 shrink-0" />
@@ -189,6 +226,7 @@ function TreeNode({ node, depth, selected, onSelect, onCreateFolder, onRenameFol
               selected={selected} onSelect={onSelect}
               onCreateFolder={onCreateFolder} onRenameFolder={onRenameFolder}
               onDeleteFolder={onDeleteFolder} onMoveFolder={onMoveFolder}
+              onDropInto={onDropInto}
             />
           ))}
         </div>
@@ -198,12 +236,21 @@ function TreeNode({ node, depth, selected, onSelect, onCreateFolder, onRenameFol
 }
 
 function TreeContent({
-  tree, selected, onSelect, onCreateFolder, onRenameFolder, onDeleteFolder, onMoveFolder,
-}: Pick<SidebarProps, 'selected' | 'onSelect' | 'onCreateFolder' | 'onRenameFolder' | 'onDeleteFolder' | 'onMoveFolder'> & { tree: FolderTree | undefined }) {
+  tree, selected, onSelect, onCreateFolder, onRenameFolder, onDeleteFolder, onMoveFolder, onDropInto,
+}: Pick<SidebarProps, 'selected' | 'onSelect' | 'onCreateFolder' | 'onRenameFolder' | 'onDeleteFolder' | 'onMoveFolder' | 'onDropInto'> & { tree: FolderTree | undefined }) {
+  const dragging = useDragStore(s => s.payload);
   return (
     <div className="p-3">
+      {/* The label doubles as the drag hint. It must not add a row: anything that
+          changes the tree's height mid-drag slides the folders out from under
+          the pointer, and the drop lands on the wrong one. */}
       <div className="flex items-center justify-between px-2 pb-1">
-        <p className="text-xs font-medium uppercase tracking-wider text-text-subtle">Library</p>
+        <p className={cn(
+          'truncate text-xs font-medium uppercase tracking-wider',
+          dragging ? 'text-accent-hover' : 'text-text-subtle',
+        )}>
+          {dragging ? `Drop ${dragging.label} on a folder` : 'Library'}
+        </p>
         <button
           onClick={() => onCreateFolder('')}
           title="New folder"
@@ -217,6 +264,7 @@ function TreeContent({
           node={tree} depth={0} selected={selected} onSelect={onSelect}
           onCreateFolder={onCreateFolder} onRenameFolder={onRenameFolder}
           onDeleteFolder={onDeleteFolder} onMoveFolder={onMoveFolder}
+          onDropInto={onDropInto}
         />
       ) : (
         <div className="space-y-1">
@@ -230,7 +278,7 @@ function TreeContent({
 }
 
 export function Sidebar({
-  selected, onSelect, onCreateFolder, onRenameFolder, onDeleteFolder, onMoveFolder,
+  selected, onSelect, onCreateFolder, onRenameFolder, onDeleteFolder, onMoveFolder, onDropInto,
   mobileOpen, onMobileClose,
 }: SidebarProps) {
   const { data: tree } = useQuery({ queryKey: ['tree'], queryFn: videosApi.tree });
@@ -272,7 +320,7 @@ export function Sidebar({
     document.body.style.userSelect = 'none';
   };
 
-  const treeProps = { tree, selected, onSelect, onCreateFolder, onRenameFolder, onDeleteFolder, onMoveFolder };
+  const treeProps = { tree, selected, onSelect, onCreateFolder, onRenameFolder, onDeleteFolder, onMoveFolder, onDropInto };
 
   return (
     <>

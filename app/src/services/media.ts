@@ -1,9 +1,7 @@
 import fs from 'fs';
 import path from 'path';
-import { APP_DIR } from '../config';
+import { THUMB_DIR } from '../config';
 import { runMedia } from './exec';
-
-const THUMB_DIR = path.join(APP_DIR, 'thumbnails');
 
 // ── Download integrity check ────────────────────────────────────────────────
 // yt-dlp can exit 0 yet leave a file that no browser will play: a merge that

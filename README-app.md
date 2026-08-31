@@ -54,7 +54,7 @@ The installer:
 5. Builds the React frontend → `client/dist/`
 6. Prunes dev dependencies and removes `client/node_modules`
 7. Creates the `streamvault` service user
-8. Writes a default `config.json` if none exists
+8. Creates `/var/lib/streamvault` (data dir) and writes a default `config.json` if none exists
 9. Installs and enables `streamvault.service`
 
 Then start it:
@@ -63,47 +63,84 @@ Then start it:
 systemctl start streamvault
 ```
 
-Open **http://\<server-ip\>:8080** and create your account on the first visit.
+Open **http://\<server-ip\>:8080** and create the admin profile — display name, email, and a 6-digit PIN — on the first visit.
 
 ## Where files live
 
+Application code and user data are deliberately kept apart, so removing or reinstalling the app never risks the library.
+
+**Data — `/var/lib/streamvault`** (override with the `SV_DATA_DIR` environment variable)
+
 | Path | Contents |
 |---|---|
-| `/opt/streamvault/config.json` | Port, email, password hash, media dir, proxy |
-| `/opt/streamvault/secrets.json` | Session signing key (auto-generated, never commit) |
-| `/opt/streamvault/users.json` | Additional managed user accounts (admin-created) |
-| `/opt/streamvault/media/` | Videos, organised in subfolders |
-| `/opt/streamvault/thumbnails/` | Generated thumbnails, sprites, VTT seek files |
-| `/opt/streamvault/meta-cache.json` | Cached ffprobe metadata (duration, resolution) |
-| `/opt/streamvault/cookies.txt` | Optional Netscape cookies for age-gated sites |
-| `/opt/streamvault/dist/` | Compiled TypeScript server |
-| `/opt/streamvault/client/dist/` | Built React frontend |
+| `config.json` | Port, media dir, proxy, update URL |
+| `secrets.json` | Session + cookie signing key (auto-generated, never commit) |
+| `users.json` | Profiles: name, email, bcrypt PIN hash, avatar, trusted devices |
+| `media/` | Videos, organised in subfolders |
+| `thumbnails/` | Generated thumbnails, sprites, VTT seek files |
+| `meta-cache.json` | Cached ffprobe metadata (duration, resolution) |
+| `download-queue.json` | Persisted download queue |
+| `cookies.txt` | Optional Netscape cookies for age-gated sites |
+
+**Code — `/opt/streamvault`**
+
+| Path | Contents |
+|---|---|
+| `dist/` | Compiled TypeScript server |
+| `client/dist/` | Built React frontend |
+| `streamvault.service` | systemd unit (sets `SV_DATA_DIR`) |
+
+On a dev checkout with no `/var/lib/streamvault` and no `SV_DATA_DIR`, the data dir falls back to the `app/` directory so `npm run dev` works with no setup. A pre-split install is migrated into `/var/lib/streamvault` automatically on the first boot after updating; the server logs what it moved.
 
 ## config.json reference
 
 ```json
 {
   "port": 8080,
-  "email": "you@example.com",
-  "passwordHash": "<bcrypt hash>",
-  "mediaDir": "/opt/streamvault/media",
+  "mediaDir": "/var/lib/streamvault/media",
   "proxy": ""
 }
 ```
 
+Accounts are **not** in `config.json` — they live in `users.json` alongside it.
+
 Set `proxy` to an `http://`, `https://`, or `socks5://` URL to route all yt-dlp downloads through it. Alternatively, set the `SV_PROXY` environment variable.
 
-## Reset password (CLI)
+## Forgotten PIN
+
+There is no reset flow, by design: no reset email, no password fallback, no recovery code.
+
+- **Someone else's PIN** — an admin issues a new one from **Settings → Profiles** (key icon). That also clears the profile's trusted devices, so the owner confirms their email once on the next sign-in.
+- **The last admin PIN** — unrecoverable from inside the app. Delete the profiles file to return to first-run setup. Videos, thumbnails and folders are untouched:
 
 ```bash
-cd /opt/streamvault
-node dist/cli/set-password.js you@example.com 'newpassword'
+rm /var/lib/streamvault/users.json
 systemctl restart streamvault
 ```
 
-## User management
+Repeated wrong PINs lock a profile: four misses are free, then 30s, doubling per miss up to 15 minutes. An admin can clear a lock early from Settings → Profiles.
 
-The first account created (via the signup page) is the **admin**. The admin can add and remove additional user accounts from **Account settings → Users**. All users share the same media library. Non-admin users can change their own passwords but cannot manage other accounts.
+## Profiles
+
+The first profile created on the setup screen is the **admin**. It can add, rename, re-colour, re-PIN, promote and remove profiles from **Settings → Profiles**. All profiles share the same media library.
+
+Every profile can change its own name, colour, email and PIN from **Settings → Account**; changing the email or the PIN requires the current PIN. Non-admins cannot see or touch other profiles.
+
+**Sign-in rules**
+
+| Situation | Required |
+|---|---|
+| A browser the server has never seen | email + 6-digit PIN |
+| The same browser afterwards | PIN only |
+| A new device, or after "Forget all devices" | email + PIN again |
+
+The trust is a signed, HTTP-only cookie valid for 6 months, hashed server-side (only the hash is stored). Signing out keeps the trust; **Settings → Trusted devices → Forget all devices** revokes it everywhere.
+
+PIN rules: exactly 6 digits, no single repeated digit (`111111`), no consecutive run (`123456`, `654321`).
+
+## Empty folders
+
+Moving or deleting the last video out of a folder leaves the folder in place — a folder disappearing mid-reorganise is worse than a stray empty one, and a folder you just created has to survive long enough to receive files. **Settings → Library & storage → Clean junk files** removes every empty folder under the media root in one pass, along with orphaned thumbnails and download leftovers.
 
 ## Service management
 
@@ -118,14 +155,14 @@ journalctl -u streamvault -f     # live logs
 Add a disk mountpoint from the Proxmox host:
 
 ```bash
-pct set <CTID> -mp0 local-lvm:500,mp=/opt/streamvault/media
+pct set <CTID> -mp0 local-lvm:500,mp=/var/lib/streamvault/media
 ```
 
-Or bind-mount an existing host directory. Re-run `chown -R streamvault:streamvault /opt/streamvault/media` after mounting.
+Or bind-mount an existing host directory. Re-run `chown -R streamvault:streamvault /var/lib/streamvault` after mounting.
 
 ## Upgrading
 
-Re-run `install-lxc.sh` — it rebuilds the server and client, restarts the service if running, and leaves `config.json`, `secrets.json`, `users.json`, `media/`, and `thumbnails/` untouched.
+Re-run `install-lxc.sh` — it rebuilds the server and client and restarts the service if running. Everything in `/var/lib/streamvault` (config, profiles, media, thumbnails) is outside the app directory and is never touched.
 
 ```bash
 cd /opt/streamvault
