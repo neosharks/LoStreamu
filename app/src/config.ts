@@ -94,6 +94,8 @@ const LEGACY_ENTRIES = [
   'media', 'thumbnails',
 ];
 
+let warnedSlowMigration = false;
+
 function moveEntry(from: string, to: string): boolean {
   let stat: fs.Stats;
   try { stat = fs.statSync(from); } catch { return false; }
@@ -110,7 +112,16 @@ function moveEntry(from: string, to: string): boolean {
   try {
     fs.renameSync(from, to);
   } catch {
-    // Different filesystem (bind mount / separate disk) — copy, then drop.
+    // Different device — copy, then drop. This is the slow path and on a large
+    // library it is very slow: systemd bind-mounts each ReadWritePaths entry, so
+    // inside the service's namespace the app tree and the data dir look like
+    // separate devices even on one disk. install-lxc.sh does the move as root
+    // before the service starts, where it is a rename; this is the fallback for
+    // anyone pointing SV_DATA_DIR somewhere by hand.
+    if (!warnedSlowMigration) {
+      warnedSlowMigration = true;
+      console.log('Migration: cannot rename across the data dir — copying instead. On a large library this takes a while; the server finishes starting once it is done.');
+    }
     try {
       fs.cpSync(from, to, { recursive: true });
       fs.rmSync(from, { recursive: true, force: true });

@@ -68,9 +68,37 @@ router.get('/app/update/stream', requireAuth, async (req, res) => {
     log(`✓ Downloaded`);
 
     log(`► Extracting archive...`);
-    await runStep('tar', ['-xzf', tarPath, '-C', APP_DIR], '/', res);
+    const stage = '/tmp/sv-update-stage';
+    fs.rmSync(stage, { recursive: true, force: true });
+    fs.mkdirSync(stage, { recursive: true });
+    await runStep('tar', ['-xzf', tarPath, '-C', stage], '/', res);
     fs.rmSync(tarPath, { force: true });
     log(`✓ Extracted`);
+
+    // tar only ever adds files. Unpacking straight over the app directory leaves
+    // behind any source file a release deleted — and one stale file that still
+    // imports something removed is enough to fail the build. Mirror the release
+    // instead, protecting everything below, which is live data rather than code.
+    log(`► Syncing app files...`);
+    try {
+      await runStep('rsync', ['-a', '--delete',
+        '--exclude=node_modules/', '--exclude=dist/',
+        '--exclude=client/node_modules/', '--exclude=client/dist/',
+        '--exclude=config.json', '--exclude=secrets.json',
+        '--exclude=users.json', '--exclude=users.json.password-era.bak',
+        '--exclude=meta-cache.json', '--exclude=download-queue.json',
+        '--exclude=cookies.txt', '--exclude=yt-dlp', '--exclude=server.log',
+        '--exclude=media/', '--exclude=thumbnails/', '--exclude=previews/',
+        `${stage}/`, `${APP_DIR}/`,
+      ], '/', res);
+      log(`✓ Synced`);
+    } catch {
+      // No rsync on this box — fall back to the old copy-over behaviour rather
+      // than abandoning the update.
+      log(`  (rsync unavailable — copying without pruning removed files)`);
+      await runStep('cp', ['-a', `${stage}/.`, APP_DIR], '/', res);
+    }
+    fs.rmSync(stage, { recursive: true, force: true });
 
     // tar only adds files, so code deleted upstream survives in dist/. The
     // password-era CLI is the one that matters: it would still run and write
@@ -106,10 +134,9 @@ router.get('/app/update/stream', requireAuth, async (req, res) => {
     await runStep('npm', ['install', '--no-fund', '--no-audit', '--loglevel=error'], APP_DIR, res);
     log(`✓ Server deps installed`);
 
-    log(`► Building server (TypeScript)...`);
-    await runStep('npm', ['run', 'build:server'], APP_DIR, res);
-    log(`✓ Server built`);
-
+    // Client first. A failed client build must not leave a freshly compiled
+    // server sitting next to a stale frontend — the next restart would then run
+    // new server code against a UI that does not match it.
     if (fs.existsSync(clientDir)) {
       log(`► Installing client dependencies...`);
       await runStep('npm', ['install', '--no-fund', '--no-audit', '--loglevel=error'], clientDir, res);
@@ -123,6 +150,10 @@ router.get('/app/update/stream', requireAuth, async (req, res) => {
       fs.rmSync(path.join(clientDir, 'node_modules'), { recursive: true, force: true });
       log(`✓ Cleaned`);
     }
+
+    log(`► Building server (TypeScript)...`);
+    await runStep('npm', ['run', 'build:server'], APP_DIR, res);
+    log(`✓ Server built`);
 
     log(`► Pruning dev dependencies...`);
     await runStep('npm', ['prune', '--production', '--no-fund', '--loglevel=error'], APP_DIR, res);

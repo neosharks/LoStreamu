@@ -261,14 +261,55 @@ step "Setting up the data directory $DATA_DIR ..."
 mkdir -p "$DATA_DIR/media" "$DATA_DIR/thumbnails"
 ok "Directories ready: $DATA_DIR/media  $DATA_DIR/thumbnails"
 
-# An install made before the data-directory split keeps everything under
-# /opt/streamvault. Leave those files where they are — the server moves them
-# into $DATA_DIR on its first boot and logs what it moved.
-for legacy in config.json secrets.json users.json media thumbnails; do
-  if [ -e "$APP_DIR/$legacy" ]; then
-    info "Legacy $legacy found in $APP_DIR — the server will migrate it on first boot"
+# Move a pre-split install's data across here, as root, before the service
+# starts. The server can do this itself, but systemd bind-mounts every
+# ReadWritePaths entry separately, so inside its mount namespace /opt and
+# /var/lib are different devices: rename() fails with EXDEV and it falls back to
+# copying the entire library. Out here they are one filesystem and each move is
+# instant.
+MOVED=0
+for legacy in config.json secrets.json users.json cookies.txt meta-cache.json download-queue.json yt-dlp; do
+  if [ -e "$APP_DIR/$legacy" ] && [ ! -e "$DATA_DIR/$legacy" ]; then
+    mv "$APP_DIR/$legacy" "$DATA_DIR/$legacy"
+    MOVED=$((MOVED + 1))
+    detail "moved $legacy"
   fi
 done
+for legacy in media thumbnails; do
+  [ -d "$APP_DIR/$legacy" ] || continue
+  mkdir -p "$DATA_DIR/$legacy"
+  # File by file, so a destination the installer already created cannot block
+  # the move, and a half-finished earlier attempt just resumes.
+  while IFS= read -r -d '' f; do
+    dest="$DATA_DIR/$legacy/${f#./}"
+    mkdir -p "$(dirname "$dest")"
+    if [ -e "$dest" ]; then rm -f "$dest"; fi
+    mv "$f" "$dest"
+    MOVED=$((MOVED + 1))
+  done < <(cd "$APP_DIR/$legacy" && find . -mindepth 1 -type f -print0)
+  find "$APP_DIR/$legacy" -mindepth 1 -type d -empty -delete 2>/dev/null || true
+done
+if [ "$MOVED" -gt 0 ]; then
+  ok "Migrated $MOVED item(s) from $APP_DIR into $DATA_DIR"
+  # A migrated config still points mediaDir at the old app-tree location.
+  if [ -f "$DATA_DIR/config.json" ]; then
+    node -e '
+      const fs = require("fs");
+      const [file, appDir, dataDir] = process.argv.slice(1);
+      try {
+        const c = JSON.parse(fs.readFileSync(file, "utf8"));
+        if (!c.mediaDir || c.mediaDir === appDir + "/media") {
+          c.mediaDir = dataDir + "/media";
+          fs.writeFileSync(file, JSON.stringify(c, null, 2));
+          console.log("  mediaDir -> " + c.mediaDir);
+        }
+      } catch {}
+    ' "$DATA_DIR/config.json" "$APP_DIR" "$DATA_DIR"
+    ok "config.json media path checked"
+  fi
+else
+  ok "No legacy data to migrate"
+fi
 
 if [ ! -f "$DATA_DIR/config.json" ] && [ ! -f "$APP_DIR/config.json" ]; then
   cat >"$DATA_DIR/config.json" <<JSON
