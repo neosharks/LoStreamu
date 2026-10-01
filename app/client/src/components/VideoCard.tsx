@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react';
-import { Play, MoreVertical, Pencil, Trash2, Move, Download, Check, GripVertical } from 'lucide-react';
+import { Play, MoreVertical, Pencil, Trash2, Move, Download, Check, GripVertical, Star, Wrench, AlertTriangle } from 'lucide-react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { formatBytes, formatDuration, cn } from '@/lib/utils';
 import { useDragStore, DRAG_VIDEOS } from '@/stores/dragStore';
@@ -32,11 +32,16 @@ interface VideoCardProps {
    * what is selected.
    */
   dragPayload?: () => { ids: string[]; label: string; sourceFolders: string[] };
+  onToggleFavorite?: (video: Video) => void;
+  /** Rebuild a video the browser will not play. Absent while one is already running. */
+  onFix?: (video: Video) => void;
+  /** True while this video's repair is queued or encoding. */
+  repairing?: boolean;
 }
 
 export function VideoCard({
   video, onPlay, onRename, onDelete, onMove, selected, onToggleSelect, selectionMode,
-  index = 0, dragPayload,
+  index = 0, dragPayload, onToggleFavorite, onFix, repairing,
 }: VideoCardProps) {
   const [thumbErr, setThumbErr] = useState(false);
   const [dragging, setDragging] = useState(false);
@@ -142,15 +147,53 @@ export function VideoCard({
           </button>
         )}
 
-        {/* Drag affordance — the gesture is invisible otherwise */}
-        {dragPayload && (
-          <span
-            title="Drag onto a folder to move"
-            className="pointer-events-none absolute right-2 top-2 hidden rounded-md bg-black/60 p-1 text-white/80 opacity-0 transition-opacity group-hover:opacity-100 sm:block"
-          >
-            <GripVertical className="h-3.5 w-3.5" />
+        {/* Top-right cluster: star always reachable, drag hint on hover */}
+        <div className="absolute right-2 top-2 flex items-center gap-1">
+          {dragPayload && (
+            <span
+              title="Drag onto a folder to move"
+              className="pointer-events-none hidden rounded-md bg-black/60 p-1 text-white/80 opacity-0 transition-opacity group-hover:opacity-100 sm:block"
+            >
+              <GripVertical className="h-3.5 w-3.5" />
+            </span>
+          )}
+          {onToggleFavorite && (
+            <button
+              onClick={e => { e.stopPropagation(); onToggleFavorite(video); }}
+              title={video.favorite ? 'Remove from Favourites' : 'Add to Favourites'}
+              aria-pressed={video.favorite}
+              className={cn(
+                'rounded-md bg-black/50 p-1 transition-all hover:bg-black/70',
+                video.favorite
+                  ? 'text-warning opacity-100'
+                  : 'text-white/80 opacity-0 group-hover:opacity-100 focus:opacity-100',
+                IS_TOUCH && 'opacity-100',
+              )}
+            >
+              <Star className="h-4 w-4" fill={video.favorite ? 'currentColor' : 'none'} />
+            </button>
+          )}
+        </div>
+
+        {/* Playability badge — says so before the player fails on them */}
+        {repairing ? (
+          <span className="absolute bottom-2 left-2 flex items-center gap-1 rounded px-1.5 py-0.5 text-xs font-medium bg-accent/90 text-white">
+            <Wrench className="h-3 w-3 animate-pulse" /> Fixing
           </span>
-        )}
+        ) : video.health && video.health.level !== 'ok' ? (
+          <span
+            title={video.health.level === 'broken'
+              ? 'This video will not play in a browser — use Fix video'
+              : 'This video will not play in Safari or on iPhone/iPad — use Fix video'}
+            className={cn(
+              'absolute bottom-2 left-2 flex items-center gap-1 rounded px-1.5 py-0.5 text-xs font-medium text-white',
+              video.health.level === 'broken' ? 'bg-danger/90' : 'bg-warning/90',
+            )}
+          >
+            <AlertTriangle className="h-3 w-3" />
+            {video.health.level === 'broken' ? "Won't play" : 'Limited'}
+          </span>
+        ) : null}
 
         {/* Duration badge */}
         {video.duration && (
@@ -178,11 +221,21 @@ export function VideoCard({
               align="end"
             >
               {[
+                ...(onToggleFavorite ? [{
+                  icon: Star,
+                  label: video.favorite ? 'Remove from Favourites' : 'Add to Favourites',
+                  onClick: () => onToggleFavorite(video),
+                }] : []),
+                ...(onFix ? [{
+                  icon: Wrench,
+                  label: repairing ? 'Fixing…' : 'Fix video',
+                  onClick: () => { if (!repairing) onFix(video); },
+                }] : []),
                 { icon: Pencil,   label: 'Rename',   onClick: () => onRename(video) },
                 { icon: Move,     label: 'Move',     onClick: () => onMove(video) },
                 { icon: Download, label: 'Download', onClick: () => { window.location.href = `/api/videos/${video.id}/download`; } },
                 { icon: Trash2,   label: 'Delete',   onClick: () => onDelete(video), danger: true },
-              ].map(({ icon: Icon, label, onClick, danger }) => (
+              ].map(({ icon: Icon, label, onClick, danger }: { icon: typeof Star; label: string; onClick: () => void; danger?: boolean }) => (
                 <DropdownMenu.Item
                   key={label}
                   onClick={onClick}

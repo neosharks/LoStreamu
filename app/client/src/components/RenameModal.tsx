@@ -8,11 +8,13 @@ interface RenameModalProps {
   onClose: () => void;
   label: string;
   current: string;
+  /** Defaults to Rename / Create depending on whether there is a current value. */
+  confirmLabel?: string;
   /** Resolves when the rename is done; the result itself is ignored. */
   onConfirm: (name: string) => Promise<unknown>;
 }
 
-export function RenameModal({ open, onClose, label, current, onConfirm }: RenameModalProps) {
+export function RenameModal({ open, onClose, label, current, confirmLabel, onConfirm }: RenameModalProps) {
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -39,7 +41,7 @@ export function RenameModal({ open, onClose, label, current, onConfirm }: Rename
           <div className="flex justify-end gap-2">
             <Button variant="ghost" onClick={onClose}>Cancel</Button>
             <Button onClick={submit} disabled={busy || !name.trim() || name.trim() === current}>
-              {current ? 'Rename' : 'Create'}
+              {confirmLabel ?? (current ? 'Rename' : 'Create')}
             </Button>
           </div>
         </DialogBody>

@@ -3,6 +3,7 @@ import path from 'path';
 import crypto from 'crypto';
 import { getConfig, VIDEO_EXTENSIONS, META_CACHE_PATH } from '../config';
 import { runMedia } from './exec';
+import { probeFastStart } from './health';
 import type { VideoItem, FolderTree } from '../types';
 
 let library: VideoItem[] = [];
@@ -93,7 +94,9 @@ export function getFolders(): string[] {
 }
 
 export async function buildMeta(): Promise<void> {
-  const items = library.filter(v => !v.duration);
+  // `probedAt` is the newer field: a library cached before playability checks
+  // existed has durations but no codec names, and needs re-probing once.
+  const items = library.filter(v => !v.duration || !v.probedAt);
   if (!items.length) return;
   // Probe in parallel — runMedia bounds this to the core count, so 400 new
   // videos get their duration/resolution across all cores instead of serially.
@@ -105,11 +108,22 @@ export async function buildMeta(): Promise<void> {
       ], { timeout: 15000 });
       const d = JSON.parse(stdout);
       const vs = (d.streams || []).find((s: any) => s.codec_type === 'video');
+      const as = (d.streams || []).find((s: any) => s.codec_type === 'audio');
       const dur = parseFloat(d.format?.duration || '0');
       const patch: Partial<VideoItem> = {};
       if (dur > 0) patch.duration = dur;
       if (vs?.width) patch.width = vs.width;
       if (vs?.height) patch.height = vs.height;
+      // Codec names + index position decide whether a browser can play the file
+      // at all. Recorded here so the library can flag unplayable videos without
+      // touching the disk again. See services/health.ts.
+      if (vs?.codec_name) patch.vcodec = String(vs.codec_name);
+      if (as?.codec_name) patch.acodec = String(as.codec_name);
+      const fast = probeFastStart(item.absPath);
+      if (fast !== undefined) patch.faststart = fast;
+      // Stamped only when ffprobe actually answered. A file it could not read at
+      // all stays unprobed and is retried, rather than being written off.
+      patch.probedAt = Date.now();
       metaCache[item.id] = { ...metaCache[item.id], ...patch };
       Object.assign(item, patch);
     } catch {}

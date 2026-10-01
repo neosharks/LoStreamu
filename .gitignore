@@ -9,6 +9,10 @@ app/users.json
 app/users.json.*.bak
 app/meta-cache.json
 app/download-queue.json
+app/favorites.json
+app/faces.json
+app/faces/
+app/models/
 app/*.mp4
 app/server.log
 app/cookies.txt

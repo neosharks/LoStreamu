@@ -35,6 +35,78 @@ export interface Video {
   duration?: number;
   width?: number;
   height?: number;
+  /** Starred by the signed-in profile. */
+  favorite: boolean;
+  /** Absent until the server has probed the file's codecs. */
+  health?: { level: HealthLevel; plan: RepairPlan };
+}
+
+// ── Playability + repair ──────────────────────────────────────────────────────
+
+/** `warn` plays in some browsers only; `broken` plays nowhere. */
+export type HealthLevel = 'ok' | 'warn' | 'broken';
+export type RepairPlan = 'none' | 'remux' | 'transcode' | 'unfixable';
+
+export interface VideoHealth {
+  level: HealthLevel;
+  plan: RepairPlan;
+  issues: string[];
+}
+
+export interface FolderHealth {
+  broken: number;
+  warn: number;
+  total: number;
+}
+
+export type RepairStatus = 'queued' | 'running' | 'done' | 'error' | 'cancelled';
+
+export interface RepairJob {
+  id: string;
+  videoId: string;
+  name: string;
+  plan: RepairPlan;
+  status: RepairStatus;
+  progress: number;
+  newVideoId?: string;
+  error?: string;
+  startedAt: number;
+}
+
+// ── Faces ─────────────────────────────────────────────────────────────────────
+
+export interface Person {
+  id: string;
+  /** Empty until named — the UI shows "Person N" instead. */
+  name: string;
+  cover: string;
+  videoCount: number;
+  faceCount: number;
+}
+
+export interface PersonInVideo {
+  personId: string;
+  faceId: string;
+  score: number;
+  /** Seconds into the video where this face was captured. */
+  at: number;
+  name: string;
+}
+
+export interface FaceIndexStatus {
+  running: boolean;
+  done: number;
+  total: number;
+  current?: string;
+  people: number;
+  error?: string;
+  /** 0-100 while the first run downloads the models. */
+  modelProgress?: number;
+  finishedAt?: number;
+  indexed: number;
+  library: number;
+  modelsReady: boolean;
+  model: 'small' | 'large';
 }
 
 export interface FolderTree {

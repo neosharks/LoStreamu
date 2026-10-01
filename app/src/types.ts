@@ -20,6 +20,16 @@ export interface VideoItem {
   duration?: number;
   width?: number;
   height?: number;
+  /** Codec/container facts recorded by buildMeta — what decides playability. */
+  vcodec?: string;
+  acodec?: string;
+  /** MP4 only: true when the moov index sits before the media data. */
+  faststart?: boolean;
+  /**
+   * When ffprobe last read this file. Absent means nobody has looked yet, which
+   * is NOT the same as "nothing was found" — only a probed file can be judged.
+   */
+  probedAt?: number;
 }
 
 export interface FolderTree {
@@ -112,4 +122,60 @@ export interface ServerStats {
   platform: string;
   activeDownloads: number;
   ytdlp?: YtDlpVersionInfo;
+}
+
+// ── Playability + repair ──────────────────────────────────────────────────────
+
+/** `warn` plays in some browsers only; `broken` plays nowhere. */
+export type HealthLevel = 'ok' | 'warn' | 'broken';
+export type RepairPlan = 'none' | 'remux' | 'transcode' | 'unfixable';
+
+export interface VideoHealth {
+  level: HealthLevel;
+  plan: RepairPlan;
+  /** Plain-language reasons, shown verbatim in the UI. */
+  issues: string[];
+}
+
+export type RepairStatus = 'queued' | 'running' | 'done' | 'error' | 'cancelled';
+
+export interface RepairJob {
+  id: string;
+  videoId: string;
+  name: string;
+  plan: RepairPlan;
+  status: RepairStatus;
+  /** 0-100, from ffmpeg's own position reporting. */
+  progress: number;
+  /** Set once the repair finishes — the id changes when the extension does. */
+  newVideoId?: string;
+  error?: string;
+  startedAt: number;
+}
+
+// ── Faces ─────────────────────────────────────────────────────────────────────
+
+export interface Person {
+  id: string;
+  /** Empty until the user names them; the UI shows "Person N" instead. */
+  name: string;
+  /** Face id whose thumbnail represents this person. */
+  cover: string;
+  videoCount: number;
+  faceCount: number;
+}
+
+export interface FaceIndexStatus {
+  running: boolean;
+  /** Videos already processed in the current (or last) run. */
+  done: number;
+  total: number;
+  /** Name of the video being scanned right now. */
+  current?: string;
+  people: number;
+  /** Set when the run stopped early — a missing model, no ffmpeg, etc. */
+  error?: string;
+  /** Model download progress, 0-100, while the first run fetches them. */
+  modelProgress?: number;
+  finishedAt?: number;
 }

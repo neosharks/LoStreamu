@@ -3,12 +3,17 @@ import {
   Play, Pause, SkipBack, SkipForward, ChevronLeft,
   Volume2, Volume1, VolumeX, Maximize, Minimize,
   PictureInPicture2, Loader2, Trash2, Repeat, Gauge,
+  Star, Wrench, AlertTriangle, Users,
 } from 'lucide-react';
-import { useQueryClient } from '@tanstack/react-query';
+import { useNavigate } from 'react-router-dom';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
+import { Button } from './ui/button';
 import { usePlayerStore } from '@/stores/playerStore';
-import { videosApi, previewApi, type PreviewMeta } from '@/api/videos';
+import { videosApi, previewApi, favoritesApi, repairApi, type PreviewMeta } from '@/api/videos';
+import { facesApi, faceThumbUrl } from '@/api/faces';
 import { formatDuration, cn } from '@/lib/utils';
+import type { VideoHealth } from '@/types';
 
 const SEEK_STEP = 10;
 const CONTROLS_TIMEOUT = 3000;
@@ -41,6 +46,7 @@ function savePrefs(prefs: PlayerPrefs): void {
 export function Player() {
   const { video, playlist, close, next, prev, removeCurrent } = usePlayerStore();
   const qc = useQueryClient();
+  const navigate = useNavigate();
 
   const containerRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -81,8 +87,23 @@ export function Player() {
   const [buffering, setBuffering] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  // Set when the <video> element gives up on the file. Until now this failed
+  // silently — a black screen with no explanation was the single biggest reason
+  // a "downloaded" video looked broken.
+  const [playbackError, setPlaybackError] = useState<VideoHealth | null>(null);
+  const [repairing, setRepairing] = useState(false);
+  const [favorite, setFavorite] = useState(false);
   // `previewMeta` (layout + frameBase) is kept as soon as the server reports it —
   // even mid-generation — so hovering shows each frame the instant it lands.
+  // Who the face scan found in this video. Clicking one opens their page.
+  const { data: peopleHere = [] } = useQuery({
+    queryKey: ['video-faces', video?.id],
+    queryFn: () => facesApi.inVideo(video!.id),
+    enabled: !!video,
+    staleTime: 5 * 60 * 1000,
+    retry: false,
+  });
+
   const [previewMeta, setPreviewMeta] = useState<PreviewMeta | null>(null);
   const [previewStatus, setPreviewStatus] = useState<'generating' | 'ready' | 'error'>('generating');
   const [previewProgress, setPreviewProgress] = useState(0);
@@ -402,6 +423,57 @@ export function Player() {
     }
   }, [video, qc, removeCurrent]);
 
+  // ── Favourite ─────────────────────────────────────────────────────────────────
+  // Mirrored into local state so the star reacts to the tap, not to a refetch.
+  useEffect(() => { setFavorite(!!video?.favorite); }, [video?.id, video?.favorite]);
+
+  const toggleFavorite = useCallback(async () => {
+    if (!video) return;
+    const next = !favorite;
+    setFavorite(next);
+    try {
+      await favoritesApi.set(video.id, next);
+      qc.invalidateQueries({ queryKey: ['videos'] });
+      qc.invalidateQueries({ queryKey: ['favorites'] });
+    } catch {
+      setFavorite(!next);
+      toast.error('Could not update Favourites');
+    }
+  }, [video, favorite, qc]);
+
+  // ── Playback failure ──────────────────────────────────────────────────────────
+  // The browser only reports "it did not work". Ask the server WHY, so the
+  // overlay can name the actual problem and offer the repair that fixes it.
+  const onVideoError = useCallback(async () => {
+    if (!video) return;
+    setBuffering(false);
+    try { setPlaybackError(await repairApi.health(video.id)); }
+    catch {
+      setPlaybackError({
+        level: 'broken',
+        plan: 'transcode',
+        issues: ['This file could not be played, and the server could not say why.'],
+      });
+    }
+  }, [video]);
+
+  // A new video gets a clean slate — the previous one's failure is not its own.
+  useEffect(() => { setPlaybackError(null); setRepairing(false); }, [video?.id]);
+
+  const startRepair = useCallback(async () => {
+    if (!video) return;
+    setRepairing(true);
+    try {
+      await repairApi.start(video.id);
+      toast.success('Fixing this video — you can keep browsing while it runs');
+      qc.invalidateQueries({ queryKey: ['repair'] });
+      close();
+    } catch {
+      setRepairing(false);
+      toast.error('Could not start the repair');
+    }
+  }, [video, qc, close]);
+
   // ── Seek bar drag (mouse) ─────────────────────────────────────────────────────
   const getFrac = useCallback((e: MouseEvent | React.MouseEvent, bar: HTMLDivElement) => {
     const r = bar.getBoundingClientRect();
@@ -577,12 +649,48 @@ export function Player() {
         // Touch taps are handled by the container gesture logic; only wire the
         // click-to-toggle for pointer (mouse) devices to avoid double-firing.
         onClick={() => { if (!isTouchRef.current) togglePlay(); }}
+        onError={onVideoError}
       />
 
       {/* Buffering spinner */}
-      {buffering && (
+      {buffering && !playbackError && (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
           <Loader2 className="h-12 w-12 animate-spin text-white/90 drop-shadow-lg" />
+        </div>
+      )}
+
+      {/* Playback failed — say why, and offer the repair that fixes it */}
+      {playbackError && (
+        <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/85 p-6 backdrop-blur-sm">
+          <div className="w-full max-w-md space-y-4 rounded-2xl border border-border bg-surface p-6 text-center">
+            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-danger/15">
+              <AlertTriangle className="h-6 w-6 text-danger" />
+            </div>
+            <div className="space-y-2">
+              <p className="text-base font-semibold text-text-primary">This video will not play here</p>
+              {playbackError.issues.length ? (
+                <ul className="space-y-1 text-left text-sm text-text-muted">
+                  {playbackError.issues.map(issue => <li key={issue}>• {issue}</li>)}
+                </ul>
+              ) : (
+                <p className="text-sm text-text-muted">The file is on the server, but the browser cannot decode it.</p>
+              )}
+            </div>
+            {playbackError.plan === 'transcode' && (
+              <p className="rounded-lg bg-elevated px-3 py-2 text-xs text-text-muted">
+                Fixing this one means re-encoding it, which takes a while on a small server.
+                It runs in the background and the original is kept until the new file is checked.
+              </p>
+            )}
+            <div className="flex gap-2">
+              <Button variant="secondary" className="flex-1" onClick={close}>Close</Button>
+              <Button className="flex-1" onClick={startRepair} disabled={repairing}>
+                {repairing
+                  ? <><Loader2 className="h-4 w-4 animate-spin" /> Starting…</>
+                  : <><Wrench className="h-4 w-4" /> Fix this video</>}
+              </Button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -649,7 +757,25 @@ export function Player() {
 
         <div className="min-w-0 flex-1">
           <p className="truncate text-base font-semibold text-white leading-tight">{video.name}</p>
-          {video.folder && <p className="truncate text-xs text-white/50">{video.folder}</p>}
+          <div className="flex items-center gap-2">
+            {video.folder && <p className="truncate text-xs text-white/50">{video.folder}</p>}
+            {/* Who the face scan found here — a shortcut to everything else they are in */}
+            {peopleHere.length > 0 && (
+              <div className="flex items-center gap-1">
+                <Users className="h-3 w-3 shrink-0 text-white/40" />
+                {peopleHere.slice(0, 5).map(person => (
+                  <button
+                    key={person.personId}
+                    onClick={() => { close(); navigate(`/people/${person.personId}`); }}
+                    title={person.name || 'See everything this person is in'}
+                    className="h-6 w-6 overflow-hidden rounded-full ring-1 ring-white/30 transition-transform hover:scale-110 hover:ring-accent"
+                  >
+                    <img src={faceThumbUrl(person.faceId)} alt={person.name} className="h-full w-full object-cover" />
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
 
         <div className="flex items-center gap-2 shrink-0">
@@ -682,6 +808,18 @@ export function Player() {
               </button>
             </>
           )}
+          {/* Favourite */}
+          <button
+            onClick={toggleFavorite}
+            className={cn(
+              'flex h-9 w-9 items-center justify-center rounded-full bg-white/10 backdrop-blur-sm transition-all hover:bg-white/25 active:scale-95',
+              favorite ? 'text-warning' : 'text-white',
+            )}
+            aria-label={favorite ? 'Remove from Favourites' : 'Add to Favourites'}
+            title={favorite ? 'Remove from Favourites' : 'Add to Favourites'}
+          >
+            <Star className="h-4 w-4" fill={favorite ? 'currentColor' : 'none'} />
+          </button>
           {/* Delete current video */}
           <button
             onClick={() => setConfirmDelete(true)}

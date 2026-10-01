@@ -38,7 +38,11 @@ export const USERS_PATH = path.join(DATA_DIR, 'users.json');
 export const COOKIES_PATH = path.join(DATA_DIR, 'cookies.txt');
 export const META_CACHE_PATH = path.join(DATA_DIR, 'meta-cache.json');
 export const QUEUE_PATH = path.join(DATA_DIR, 'download-queue.json');
+export const FAVORITES_PATH = path.join(DATA_DIR, 'favorites.json');
+export const FACES_PATH = path.join(DATA_DIR, 'faces.json');
 export const THUMB_DIR = path.join(DATA_DIR, 'thumbnails');
+export const FACE_THUMB_DIR = path.join(DATA_DIR, 'faces');
+export const MODELS_DIR = path.join(DATA_DIR, 'models');
 export const PREVIEW_DIR = path.join(DATA_DIR, 'previews');
 export const YT_DLP_LOCAL = path.join(DATA_DIR, 'yt-dlp');
 
@@ -77,7 +81,7 @@ export function getProxy(): string {
 
 // Create the data tree before anything reads from it. Safe to call repeatedly.
 export function ensureDataDirs(): void {
-  for (const dir of [DATA_DIR, path.join(DATA_DIR, 'media'), THUMB_DIR]) {
+  for (const dir of [DATA_DIR, path.join(DATA_DIR, 'media'), THUMB_DIR, FACE_THUMB_DIR, MODELS_DIR]) {
     try { fs.mkdirSync(dir, { recursive: true }); } catch {}
   }
 }
@@ -91,7 +95,8 @@ export function ensureDataDirs(): void {
 const LEGACY_ENTRIES = [
   'config.json', 'secrets.json', 'users.json', 'cookies.txt',
   'meta-cache.json', 'download-queue.json', 'yt-dlp',
-  'media', 'thumbnails',
+  'favorites.json', 'faces.json',
+  'media', 'thumbnails', 'faces', 'models',
 ];
 
 let warnedSlowMigration = false;

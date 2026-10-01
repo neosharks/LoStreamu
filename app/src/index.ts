@@ -22,6 +22,9 @@ import settingsRouter from './routes/settings';
 import uploadRouter from './routes/upload';
 import appUpdateRouter from './routes/appUpdate';
 import previewRouter from './routes/preview';
+import favoritesRouter from './routes/favorites';
+import repairRouter from './routes/repair';
+import facesRouter from './routes/faces';
 import { initPreviews } from './services/preview';
 import { requireAuth } from './middleware/auth';
 import { migratePasswordEraConfig } from './services/users';
@@ -134,6 +137,9 @@ app.use('/api', settingsRouter);
 app.use('/api', uploadRouter);
 app.use('/api', appUpdateRouter);
 app.use('/api', previewRouter);
+app.use('/api', favoritesRouter);
+app.use('/api', repairRouter);
+app.use('/api', facesRouter);
 
 // ── Serve React SPA ───────────────────────────────────────────────────────────
 

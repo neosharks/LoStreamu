@@ -18,25 +18,19 @@ fi
 VERSION=$(node -p "require('./$SRC/package.json').version")
 echo "Version: $VERSION"
 
-tar -czf "$OUT" \
-  --exclude='./node_modules' \
-  --exclude='./dist' \
-  --exclude='./client/node_modules' \
-  --exclude='./client/dist' \
-  --exclude='./config.json' \
-  --exclude='./secrets.json' \
-  --exclude='./users.json' \
-  --exclude='./users.json.*.bak' \
-  --exclude='./meta-cache.json' \
-  --exclude='./download-queue.json' \
-  --exclude='./server.log' \
-  --exclude='./cookies.txt' \
-  --exclude='./yt-dlp' \
-  --exclude='./thumbnails' \
-  --exclude='./previews' \
-  --exclude='./media' \
-  --exclude='./*.mp4' \
-  -C "$SRC" .
+# Pack exactly what is committable, taken from git rather than from a list of
+# --exclude patterns. Those patterns are unanchored in both GNU tar and bsdtar,
+# so an exclude meant for the app's own data directory also matched source
+# directories of the same name (./faces excluded src/services/faces, shipping a
+# release that could not build). .gitignore already lists every runtime file, so
+# asking git removes that whole class of mistake — and nothing untracked and
+# ignored, such as a developer's own library or face index, can ever ship.
+#   --cached  : tracked files
+#   --others  : new files not yet committed, so a release can be built before the
+#               commit lands
+#   --exclude-standard : honour .gitignore
+git -C "$SRC" ls-files --cached --others --exclude-standard -z \
+  | tar -czf "$OUT" --null -T - -C "$SRC"
 
 echo "Wrote $OUT ($(du -h "$OUT" | cut -f1))"
 echo "Entries packed:"

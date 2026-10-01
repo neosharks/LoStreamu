@@ -9,6 +9,9 @@ import {
   getLibrary, buildTree, findById, rescan, safePath, getMediaRoot, purgeMetaEntry, listAllFolders,
 } from '../services/library';
 import { thumbPath, spritePath, vttPath, invalidateThumb } from '../services/media';
+import { listFavorites, rekeyFavorite, forgetFavorite } from '../services/favorites';
+import { rekeyFaces, forgetFaces } from '../services/faces/store';
+import { projectVideo } from '../services/videoView';
 
 const router = Router();
 
@@ -26,12 +29,19 @@ router.get('/videos', requireAuth, (req, res) => {
       v.folder === folder || (deep && v.folder.startsWith(folder ? folder + '/' : '')),
     );
   }
-  res.json(items.map(v => ({
-    id: v.id, name: v.name, ext: v.ext, folder: v.folder,
-    size: v.size, addedAt: v.addedAt, duration: v.duration,
-    width: v.width, height: v.height,
-  })));
+  const starred = new Set(listFavorites(req.user!.id));
+  res.json(items.map(v => projectVideo(v, starred.has(v.relPath))));
 });
+
+// Every relative path under `folder`, paired with where it lands when the folder
+// is renamed or moved to `destFolder` — what favourites and the face index need
+// to follow the files.
+function pathsUnder(folder: string, destFolder: string): Array<[string, string]> {
+  const prefix = folder + '/';
+  return getLibrary()
+    .filter(v => v.relPath.startsWith(prefix))
+    .map(v => [v.relPath, destFolder + '/' + v.relPath.slice(prefix.length)] as [string, string]);
+}
 
 router.get('/tree', requireAuth, (_req, res) => res.json(buildTree()));
 
@@ -61,6 +71,10 @@ router.patch('/videos/:id', requireAuth, (req, res) => {
   const newAbs = path.join(path.dirname(v.absPath), name + v.ext);
   if (fs.existsSync(newAbs)) { res.status(409).json({ error: 'Name already exists.' }); return; }
   fs.renameSync(v.absPath, newAbs);
+  // Stars and faces are keyed by path, so they have to follow the rename.
+  const newRel = path.relative(getMediaRoot(), newAbs).split(path.sep).join('/');
+  rekeyFavorite(v.relPath, newRel);
+  rekeyFaces(v.relPath, newRel);
   rescan();
   res.json({ ok: true });
 });
@@ -83,6 +97,8 @@ router.delete('/videos', requireAuth, (req, res) => {
     }
     invalidateThumb(id);
     purgeMetaEntry(id);
+    forgetFavorite(v.relPath);
+    forgetFaces(v.relPath);
   }
   rescan();
   res.json({ ok: true, deleted, missing, failed });
@@ -111,8 +127,13 @@ router.post('/videos/move', requireAuth, (req, res) => {
     const target = path.join(destAbs, v.name + v.ext);
     if (path.resolve(v.absPath) === target) { alreadyThere++; continue; }
     if (fs.existsSync(target)) { conflicts.push(v.name + v.ext); continue; }
-    try { fs.renameSync(v.absPath, target); moved++; }
-    catch { failed.push(v.name + v.ext); }
+    try {
+      fs.renameSync(v.absPath, target);
+      const newRel = path.relative(getMediaRoot(), target).split(path.sep).join('/');
+      rekeyFavorite(v.relPath, newRel);
+      rekeyFaces(v.relPath, newRel);
+      moved++;
+    } catch { failed.push(v.name + v.ext); }
   }
   rescan();
   res.json({ ok: true, moved, alreadyThere, missing, conflicts, failed });
@@ -143,7 +164,10 @@ router.patch('/folders', requireAuth, (req, res) => {
   if (!abs || !fs.existsSync(abs)) { res.status(404).json({ error: 'Folder not found.' }); return; }
   const newAbs = path.join(path.dirname(abs), name);
   if (fs.existsSync(newAbs)) { res.status(409).json({ error: 'Name already in use.' }); return; }
+  const cut = folder.lastIndexOf('/');
+  const moves = pathsUnder(folder, cut === -1 ? name : folder.slice(0, cut + 1) + name);
   fs.renameSync(abs, newAbs);
+  for (const [from, to] of moves) { rekeyFavorite(from, to); rekeyFaces(from, to); }
   rescan();
   res.json({ ok: true });
 });
@@ -158,6 +182,8 @@ router.delete('/folders', requireAuth, (req, res) => {
       try { fs.rmSync(p, { force: true }); } catch {}
     }
     purgeMetaEntry(v.id);
+    forgetFavorite(v.relPath);
+    forgetFaces(v.relPath);
   }
   fs.rmSync(abs, { recursive: true, force: true });
   rescan();
@@ -175,7 +201,10 @@ router.post('/folders/move', requireAuth, (req, res) => {
   if (newAbs.startsWith(abs + path.sep)) { res.status(400).json({ error: 'Cannot move a folder into itself.' }); return; }
   if (fs.existsSync(newAbs)) { res.status(409).json({ error: 'A folder with that name already exists there.' }); return; }
   fs.mkdirSync(destAbs, { recursive: true });
+  const base = path.basename(abs);
+  const moves = pathsUnder(folder, dest ? `${dest}/${base}` : base);
   fs.renameSync(abs, newAbs);
+  for (const [from, to] of moves) { rekeyFavorite(from, to); rekeyFaces(from, to); }
   rescan();
   res.json({ ok: true });
 });

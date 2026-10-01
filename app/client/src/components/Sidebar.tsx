@@ -1,8 +1,9 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useQuery, useMutation } from '@tanstack/react-query';
-import { Folder, FolderOpen, ChevronRight, Film, Plus, Pencil, Trash2, Move, X, MoreVertical, LogOut, Loader2, CornerDownRight } from 'lucide-react';
+import { Folder, FolderOpen, ChevronRight, Film, Plus, Pencil, Trash2, Move, X, MoreVertical, LogOut, Loader2, CornerDownRight, Star, Users } from 'lucide-react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import { videosApi } from '@/api/videos';
+import { videosApi, favoritesApi } from '@/api/videos';
 import { authApi } from '@/api/settings';
 import { cn, formatBytes } from '@/lib/utils';
 import { useDragStore, DRAG_FOLDER, type DragPayload } from '@/stores/dragStore';
@@ -85,12 +86,16 @@ interface SidebarProps {
   onDropInto: (payload: DragPayload, dest: string) => void;
   mobileOpen?: boolean;
   onMobileClose?: () => void;
+  /** Which saved view the library is showing — folders, or the starred ones. */
+  view?: 'library' | 'favorites';
+  onSelectView?: (view: 'library' | 'favorites') => void;
 }
 
 interface TreeNodeProps {
   node: FolderTree;
   depth: number;
-  selected: string;
+  /** Null while a saved view is showing — then no folder is the current one. */
+  selected: string | null;
   onSelect: (folder: string) => void;
   onCreateFolder: (parent: string) => void;
   onRenameFolder: (folder: string) => void;
@@ -235,12 +240,63 @@ function TreeNode({ node, depth, selected, onSelect, onCreateFolder, onRenameFol
   );
 }
 
+// Favourites and People sit above the folder tree: both are ways into the same
+// library that have nothing to do with where a file happens to live on disk.
+function SavedViews({ view, onSelectView, onMobileClose }: {
+  view: 'library' | 'favorites';
+  onSelectView?: (view: 'library' | 'favorites') => void;
+  onMobileClose?: () => void;
+}) {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const { data: favorites } = useQuery({
+    queryKey: ['favorites'],
+    queryFn: favoritesApi.list,
+    staleTime: 30_000,
+  });
+  const onPeoplePage = location.pathname.startsWith('/people');
+
+  const row = (active: boolean) => cn(
+    'flex w-full items-center gap-2 rounded-lg py-1.5 pl-3 pr-2 text-left text-sm transition-colors',
+    active
+      ? 'bg-accent-light text-accent-hover font-medium'
+      : 'text-text-muted hover:bg-elevated hover:text-text-primary',
+  );
+
+  return (
+    <div className="mb-2 space-y-0.5">
+      <button
+        onClick={() => { onSelectView?.('favorites'); onMobileClose?.(); }}
+        className={row(view === 'favorites' && !onPeoplePage)}
+      >
+        <Star
+          className={cn('h-3.5 w-3.5 shrink-0', view === 'favorites' && !onPeoplePage ? 'text-accent' : 'text-warning')}
+          fill={view === 'favorites' && !onPeoplePage ? 'currentColor' : 'none'}
+        />
+        <span className="flex-1 truncate">Favourites</span>
+        {favorites && favorites.length > 0 && (
+          <span className="shrink-0 text-xs text-text-subtle">{favorites.length}</span>
+        )}
+      </button>
+      <button
+        onClick={() => { navigate('/people'); onMobileClose?.(); }}
+        className={row(onPeoplePage)}
+      >
+        <Users className="h-3.5 w-3.5 shrink-0" />
+        <span className="flex-1 truncate">People</span>
+      </button>
+    </div>
+  );
+}
+
 function TreeContent({
   tree, selected, onSelect, onCreateFolder, onRenameFolder, onDeleteFolder, onMoveFolder, onDropInto,
-}: Pick<SidebarProps, 'selected' | 'onSelect' | 'onCreateFolder' | 'onRenameFolder' | 'onDeleteFolder' | 'onMoveFolder' | 'onDropInto'> & { tree: FolderTree | undefined }) {
+  view = 'library', onSelectView, onMobileClose,
+}: Pick<SidebarProps, 'selected' | 'onSelect' | 'onCreateFolder' | 'onRenameFolder' | 'onDeleteFolder' | 'onMoveFolder' | 'onDropInto' | 'view' | 'onSelectView' | 'onMobileClose'> & { tree: FolderTree | undefined }) {
   const dragging = useDragStore(s => s.payload);
   return (
     <div className="p-3">
+      <SavedViews view={view} {...(onSelectView && { onSelectView })} {...(onMobileClose && { onMobileClose })} />
       {/* The label doubles as the drag hint. It must not add a row: anything that
           changes the tree's height mid-drag slides the folders out from under
           the pointer, and the drop lands on the wrong one. */}
@@ -261,7 +317,7 @@ function TreeContent({
       </div>
       {tree ? (
         <TreeNode
-          node={tree} depth={0} selected={selected} onSelect={onSelect}
+          node={tree} depth={0} selected={view === 'favorites' ? null : selected} onSelect={onSelect}
           onCreateFolder={onCreateFolder} onRenameFolder={onRenameFolder}
           onDeleteFolder={onDeleteFolder} onMoveFolder={onMoveFolder}
           onDropInto={onDropInto}
@@ -279,7 +335,7 @@ function TreeContent({
 
 export function Sidebar({
   selected, onSelect, onCreateFolder, onRenameFolder, onDeleteFolder, onMoveFolder, onDropInto,
-  mobileOpen, onMobileClose,
+  mobileOpen, onMobileClose, view, onSelectView,
 }: SidebarProps) {
   const { data: tree } = useQuery({ queryKey: ['tree'], queryFn: videosApi.tree });
 
@@ -320,7 +376,10 @@ export function Sidebar({
     document.body.style.userSelect = 'none';
   };
 
-  const treeProps = { tree, selected, onSelect, onCreateFolder, onRenameFolder, onDeleteFolder, onMoveFolder, onDropInto };
+  const treeProps = {
+    tree, selected, onSelect, onCreateFolder, onRenameFolder, onDeleteFolder, onMoveFolder, onDropInto,
+    view, onSelectView, onMobileClose,
+  };
 
   return (
     <>

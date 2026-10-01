@@ -1,5 +1,7 @@
 import api from './client';
-import type { Video, FolderTree, ServerStats } from '../types';
+import type {
+  Video, FolderTree, ServerStats, VideoHealth, FolderHealth, RepairJob, RepairPlan,
+} from '../types';
 
 export interface PreviewMeta {
   count: number;
@@ -84,4 +86,39 @@ export const videosApi = {
 
   archiveFolders: () =>
     api.get<string[]>('/folders/archives').then(r => r.data),
+};
+
+// ── Favourites ────────────────────────────────────────────────────────────────
+
+export const favoritesApi = {
+  list: () => api.get<Video[]>('/favorites').then(r => r.data),
+
+  /** Omit `favorite` to flip whatever the server currently has. */
+  set: (id: string, favorite?: boolean) =>
+    api.post<{ ok: boolean; favorite: boolean }>(
+      `/videos/${id}/favorite`, favorite === undefined ? {} : { favorite },
+    ).then(r => r.data),
+};
+
+// ── Repair ────────────────────────────────────────────────────────────────────
+
+export const repairApi = {
+  health: (id: string) => api.get<VideoHealth>(`/videos/${id}/health`).then(r => r.data),
+
+  folderHealth: (folder: string, deep = true) =>
+    api.get<FolderHealth>('/folders/health', {
+      params: { folder, ...(deep ? {} : { deep: '0' }) },
+    }).then(r => r.data),
+
+  start: (id: string, plan?: RepairPlan) =>
+    api.post<RepairJob>(`/videos/${id}/repair`, plan ? { plan } : {}).then(r => r.data),
+
+  startFolder: (folder: string, deep = true) =>
+    api.post<{ ok: boolean; queued: number; jobs: RepairJob[] }>(
+      '/repair/folder', { folder, deep },
+    ).then(r => r.data),
+
+  jobs: () => api.get<RepairJob[]>('/repair').then(r => r.data),
+
+  cancel: (jobId: string) => api.post(`/repair/${jobId}/cancel`).then(r => r.data),
 };

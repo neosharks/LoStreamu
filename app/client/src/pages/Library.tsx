@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
   Film, Search, Move, Trash2, X, Shuffle, FolderOpen, Plus, Download, Settings,
-  ListChecks, FolderPlus, ChevronRight, Layers, CornerDownRight, Home,
+  ListChecks, FolderPlus, ChevronRight, Layers, CornerDownRight, Home, Star, Wrench,
 } from 'lucide-react';
 import { Header } from '@/components/Header';
 import { Sidebar } from '@/components/Sidebar';
@@ -17,7 +17,8 @@ import { DownloadsTray } from '@/components/DownloadsTray';
 import { RenameModal } from '@/components/RenameModal';
 import { ConfirmModal } from '@/components/ConfirmModal';
 import { MoveModal } from '@/components/MoveModal';
-import { videosApi } from '@/api/videos';
+import { RepairTray, useRepairJobs } from '@/components/RepairTray';
+import { videosApi, favoritesApi, repairApi } from '@/api/videos';
 import { downloadsApi } from '@/api/downloads';
 import { usePlayerStore } from '@/stores/playerStore';
 import { useDownloadsStore } from '@/stores/downloadsStore';
@@ -107,6 +108,16 @@ export function Library() {
   const reshuffle = () =>
     patchParams(p => { p.delete('sort'); p.set('seed', String(randomSeed())); });
 
+  // The starred view is a filter over the same grid, not a separate page: every
+  // selection, drag, move and player behaviour has to work there too.
+  const view: 'library' | 'favorites' = searchParams.get('view') === 'favorites' ? 'favorites' : 'library';
+  const setView = (next: 'library' | 'favorites') =>
+    patchParams(p => {
+      next === 'favorites' ? p.set('view', 'favorites') : p.delete('view');
+      // Favourites span the whole library, so a folder filter would only confuse.
+      if (next === 'favorites') p.delete('folder');
+    });
+
   // Recursive by default (what the library has always shown); flip to see only
   // what sits directly in this folder, which is what makes organising legible.
   const deep = searchParams.get('deep') !== '0';
@@ -139,10 +150,25 @@ export function Library() {
   const [moveFolderPath, setMoveFolderPath] = useState<string | null>(null);
 
   const { data: videos = [], isLoading } = useQuery({
-    queryKey: ['videos', folder, deep],
-    queryFn: () => videosApi.list(folder, false, deep),
+    queryKey: view === 'favorites' ? ['favorites'] : ['videos', folder, deep],
+    queryFn: () => (view === 'favorites' ? favoritesApi.list() : videosApi.list(folder, false, deep)),
     staleTime: 10_000,
   });
+
+  // What the "Fix N videos" button counts. Folder-scoped, so it matches the view.
+  const { data: folderHealth } = useQuery({
+    queryKey: ['folder-health', folder, deep],
+    queryFn: () => repairApi.folderHealth(folder, deep),
+    enabled: view === 'library',
+    staleTime: 30_000,
+  });
+
+  // Shared with the repair tray through the query cache — one poll, two readers.
+  const { jobs: repairJobs } = useRepairJobs();
+  const repairingIds = useMemo(
+    () => new Set(repairJobs.filter(j => j.status === 'queued' || j.status === 'running').map(j => j.videoId)),
+    [repairJobs],
+  );
 
   // Shared with the sidebar via the query cache — one fetch, two consumers.
   const { data: tree } = useQuery({ queryKey: ['tree'], queryFn: videosApi.tree });
@@ -154,6 +180,8 @@ export function Library() {
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ['videos'] });
     qc.invalidateQueries({ queryKey: ['tree'] });
+    qc.invalidateQueries({ queryKey: ['favorites'] });
+    qc.invalidateQueries({ queryKey: ['folder-health'] });
   };
 
   const renameMutation = useMutation({
@@ -195,6 +223,47 @@ export function Library() {
       invalidate();
     },
     onError: () => toast.error('Move failed'),
+  });
+
+  const favoriteMutation = useMutation({
+    mutationFn: (video: Video) => favoritesApi.set(video.id),
+    // Flip the card straight away; the server call only confirms it.
+    onMutate: async (video: Video) => {
+      const keys = [['favorites'], ['videos', folder, deep]];
+      const snapshots = keys.map(key => [key, qc.getQueryData<Video[]>(key)] as const);
+      for (const [key] of snapshots) {
+        qc.setQueryData<Video[]>(key, old => old?.map(v =>
+          v.id === video.id ? { ...v, favorite: !v.favorite } : v));
+      }
+      return { snapshots };
+    },
+    onError: (_e, _video, context) => {
+      for (const [key, data] of context?.snapshots ?? []) qc.setQueryData(key, data);
+      toast.error('Could not update Favourites');
+    },
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ['favorites'] });
+      qc.invalidateQueries({ queryKey: ['videos'] });
+    },
+  });
+
+  const repairMutation = useMutation({
+    mutationFn: (video: Video) => repairApi.start(video.id),
+    onSuccess: (_job, video) => {
+      toast.success(`Fixing "${video.name}" — it runs in the background`);
+      qc.invalidateQueries({ queryKey: ['repair'] });
+    },
+    onError: () => toast.error('Could not start the repair'),
+  });
+
+  const repairFolderMutation = useMutation({
+    mutationFn: () => repairApi.startFolder(folder, deep),
+    onSuccess: r => {
+      if (r.queued) toast.success(`Fixing ${r.queued} ${r.queued === 1 ? 'video' : 'videos'}`);
+      else toast.info('Nothing here needs fixing');
+      qc.invalidateQueries({ queryKey: ['repair'] });
+    },
+    onError: () => toast.error('Could not start the repairs'),
   });
 
   const createFolderMutation = useMutation({
@@ -392,7 +461,9 @@ export function Library() {
       <div className="flex flex-1 overflow-hidden">
         <Sidebar
           selected={folder}
-          onSelect={f => { setFolder(f); setMobileSidebarOpen(false); }}
+          view={view}
+          onSelectView={setView}
+          onSelect={f => { setView('library'); setFolder(f); setMobileSidebarOpen(false); }}
           onCreateFolder={parent => setCreateFolderParent(parent)}
           onRenameFolder={f => setRenameFolderPath(f)}
           onDeleteFolder={f => setDeleteFolderPath(f)}
@@ -405,9 +476,24 @@ export function Library() {
         <main className="flex-1 overflow-y-auto">
           {/* Extra bottom padding on mobile to clear the bottom nav */}
           <div className="p-4 sm:p-6 pb-24 lg:pb-6">
-            {/* Breadcrumbs — every crumb is also a drop target, so dragging a
-                file up a level is the same gesture as dragging it down one. */}
-            <Breadcrumbs folder={folder} onSelect={setFolder} onDropInto={handleDropInto} />
+            {view === 'favorites' ? (
+              <nav className="mb-3 flex items-center gap-2 text-sm" aria-label="View">
+                <button
+                  onClick={() => setView('library')}
+                  className="flex items-center gap-1.5 rounded-lg px-2 py-1 text-text-muted transition-colors hover:bg-elevated hover:text-text-primary"
+                >
+                  <Home className="h-3.5 w-3.5 shrink-0" /> All videos
+                </button>
+                <ChevronRight className="h-3.5 w-3.5 shrink-0 text-text-subtle" />
+                <span className="flex items-center gap-1.5 px-2 py-1 text-text-primary">
+                  <Star className="h-3.5 w-3.5 shrink-0 text-warning" fill="currentColor" /> Favourites
+                </span>
+              </nav>
+            ) : (
+              /* Breadcrumbs — every crumb is also a drop target, so dragging a
+                 file up a level is the same gesture as dragging it down one. */
+              <Breadcrumbs folder={folder} onSelect={setFolder} onDropInto={handleDropInto} />
+            )}
 
             {/* Toolbar */}
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
@@ -415,13 +501,31 @@ export function Library() {
                 <h2 className="text-sm font-semibold text-text-primary">
                   {filtered.length} {filtered.length === 1 ? 'video' : 'videos'}
                 </h2>
-                <button
-                  onClick={() => setCreateFolderParent(folder)}
-                  title="New folder here"
-                  className="flex items-center gap-1.5 rounded-lg border border-border bg-elevated px-2.5 py-1 text-xs font-medium text-text-muted transition-colors hover:bg-border hover:text-text-primary"
-                >
-                  <FolderPlus className="h-3.5 w-3.5" /> New folder
-                </button>
+                {view === 'library' && (
+                  <button
+                    onClick={() => setCreateFolderParent(folder)}
+                    title="New folder here"
+                    className="flex items-center gap-1.5 rounded-lg border border-border bg-elevated px-2.5 py-1 text-xs font-medium text-text-muted transition-colors hover:bg-border hover:text-text-primary"
+                  >
+                    <FolderPlus className="h-3.5 w-3.5" /> New folder
+                  </button>
+                )}
+                {view === 'library' && !!folderHealth?.total && (
+                  <button
+                    onClick={() => repairFolderMutation.mutate()}
+                    disabled={repairFolderMutation.isPending}
+                    title={`${folderHealth.broken} will not play, ${folderHealth.warn} play in some browsers only`}
+                    className={cn(
+                      'flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-medium transition-colors disabled:opacity-50',
+                      folderHealth.broken
+                        ? 'border-danger/40 bg-danger/10 text-danger hover:bg-danger/20'
+                        : 'border-warning/40 bg-warning/10 text-warning hover:bg-warning/20',
+                    )}
+                  >
+                    <Wrench className="h-3.5 w-3.5" />
+                    Fix {folderHealth.total} {folderHealth.total === 1 ? 'video' : 'videos'}
+                  </button>
+                )}
                 {filtered.length > 0 && (
                   <button
                     onClick={toggleSelectAll}
@@ -439,7 +543,7 @@ export function Library() {
                 )}
               </div>
               <div className="flex items-center gap-1.5">
-                <button
+                {view === 'library' && <button
                   onClick={() => setDeep(!deep)}
                   title={deep ? 'Showing videos in subfolders too' : 'Showing only this folder'}
                   className={cn(
@@ -451,7 +555,7 @@ export function Library() {
                 >
                   <Layers className="h-3.5 w-3.5" />
                   {deep ? 'Incl. subfolders' : 'This folder only'}
-                </button>
+                </button>}
                 <label className="text-xs text-text-muted">Sort</label>
                 <select
                   value={sort}
@@ -515,7 +619,7 @@ export function Library() {
             )}
 
             {/* Subfolders — navigation and drop targets in one */}
-            {subfolders.length > 0 && (
+            {view === 'library' && subfolders.length > 0 && (
               <div className="mb-5">
                 <p className="mb-2 text-xs font-medium uppercase tracking-wider text-text-subtle">
                   Folders · {subfolders.length}
@@ -555,8 +659,8 @@ export function Library() {
                 <div className="relative mb-5 flex h-20 w-20 items-center justify-center">
                   <span className="brand-glow absolute inset-0 animate-glow-pulse rounded-full blur-lg" />
                   <div className="relative flex h-16 w-16 items-center justify-center rounded-2xl border border-border bg-surface">
-                    {search
-                      ? <Search className="h-8 w-8 text-accent-hover" />
+                    {search ? <Search className="h-8 w-8 text-accent-hover" />
+                      : view === 'favorites' ? <Star className="h-8 w-8 text-accent-hover" />
                       : <Film className="h-8 w-8 text-accent-hover" />}
                   </div>
                 </div>
@@ -564,6 +668,16 @@ export function Library() {
                   <>
                     <p className="text-base font-semibold text-text-primary">No results for "{search}"</p>
                     <p className="mt-1 text-sm text-text-muted">Try a different search term</p>
+                  </>
+                ) : view === 'favorites' ? (
+                  <>
+                    <p className="text-base font-semibold text-text-primary">Nothing starred yet</p>
+                    <p className="mt-1 text-sm text-text-muted">
+                      Tap the star on any video and it shows up here, for your profile only.
+                    </p>
+                    <Button variant="secondary" className="mt-5" onClick={() => setView('library')}>
+                      <Film className="h-4 w-4" /> Back to the library
+                    </Button>
                   </>
                 ) : !deep && hiddenBySubfolderFilter > 0 ? (
                   // Nothing sits directly here, but the subfolders are full — say
@@ -613,6 +727,9 @@ export function Library() {
                     onToggleSelect={toggleSelect}
                     selectionMode={isSelecting}
                     dragPayload={() => dragPayloadFor(video)}
+                    onToggleFavorite={v => favoriteMutation.mutate(v)}
+                    onFix={v => repairMutation.mutate(v)}
+                    repairing={repairingIds.has(video.id)}
                   />
                 ))}
               </div>
@@ -651,6 +768,7 @@ export function Library() {
       {nowPlaying && <Player />}
       <AddVideosModal open={showAdd} onClose={() => setShowAdd(false)} currentFolder={folder} />
       {!showAdd && <DownloadsTray onOpenModal={() => setShowAdd(true)} />}
+      <RepairTray />
 
       {/* Video rename */}
       <RenameModal
