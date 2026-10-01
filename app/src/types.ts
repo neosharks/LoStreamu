@@ -149,8 +149,20 @@ export interface RepairJob {
   progress: number;
   /** Set once the repair finishes — the id changes when the extension does. */
   newVideoId?: string;
+  /** True when the file was removed because it could not be repaired. */
+  deleted?: boolean;
   error?: string;
   startedAt: number;
+}
+
+export interface RepairOptions {
+  plan?: RepairPlan;
+  /**
+   * Delete the video when the repair cannot produce a playable file. Off unless
+   * asked for: it destroys the original, and a repair can fail for reasons that
+   * have nothing to do with the file (a full disk, a killed process).
+   */
+  deleteIfUnfixable?: boolean;
 }
 
 // ── Faces ─────────────────────────────────────────────────────────────────────

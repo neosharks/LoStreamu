@@ -18,6 +18,7 @@ import { RenameModal } from '@/components/RenameModal';
 import { ConfirmModal } from '@/components/ConfirmModal';
 import { MoveModal } from '@/components/MoveModal';
 import { RepairTray, useRepairJobs } from '@/components/RepairTray';
+import { FixVideosModal } from '@/components/FixVideosModal';
 import { videosApi, favoritesApi, repairApi } from '@/api/videos';
 import { downloadsApi } from '@/api/downloads';
 import { usePlayerStore } from '@/stores/playerStore';
@@ -25,7 +26,7 @@ import { useDownloadsStore } from '@/stores/downloadsStore';
 import type { DragPayload } from '@/stores/dragStore';
 import { useFolderDrop } from '@/hooks/useFolderDrop';
 import { cn } from '@/lib/utils';
-import type { Video, FolderTree } from '@/types';
+import type { RepairOptions, Video, FolderTree } from '@/types';
 
 type SortKey = 'addedAt' | 'addedAt-asc' | 'name' | 'name-desc' | 'size' | 'duration' | 'random';
 
@@ -142,6 +143,9 @@ export function Library() {
   const [renameVideo, setRenameVideo] = useState<Video | null>(null);
   const [deleteVideos, setDeleteVideos] = useState<Video[]>([]);
   const [moveVideos, setMoveVideos] = useState<Video[]>([]);
+  // Non-null while the fix dialog is open. `scope` is null for a hand-picked
+  // selection and the folder name when the whole folder is being fixed.
+  const [fixing, setFixing] = useState<{ videos: Video[]; scope: string | null } | null>(null);
 
   // Folder modals
   const [createFolderParent, setCreateFolderParent] = useState<string | null>(null);
@@ -256,8 +260,20 @@ export function Library() {
     onError: () => toast.error('Could not start the repair'),
   });
 
+  const repairManyMutation = useMutation({
+    mutationFn: ({ ids, options }: { ids: string[]; options: RepairOptions }) =>
+      repairApi.startMany(ids, options),
+    onSuccess: r => {
+      if (r.queued) toast.success(`Fixing ${r.queued} ${r.queued === 1 ? 'video' : 'videos'}`);
+      else toast.info('Nothing to fix there');
+      setSelectedIds(new Set());
+      qc.invalidateQueries({ queryKey: ['repair'] });
+    },
+    onError: () => toast.error('Could not start the repairs'),
+  });
+
   const repairFolderMutation = useMutation({
-    mutationFn: () => repairApi.startFolder(folder, deep),
+    mutationFn: (options: RepairOptions) => repairApi.startFolder(folder, deep, options),
     onSuccess: r => {
       if (r.queued) toast.success(`Fixing ${r.queued} ${r.queued === 1 ? 'video' : 'videos'}`);
       else toast.info('Nothing here needs fixing');
@@ -512,7 +528,10 @@ export function Library() {
                 )}
                 {view === 'library' && !!folderHealth?.total && (
                   <button
-                    onClick={() => repairFolderMutation.mutate()}
+                    onClick={() => setFixing({
+                      videos: filtered.filter(v => v.health && v.health.level !== 'ok'),
+                      scope: folder ? folderDisplayName(folder) : 'the library',
+                    })}
                     disabled={repairFolderMutation.isPending}
                     title={`${folderHealth.broken} will not play, ${folderHealth.warn} play in some browsers only`}
                     className={cn(
@@ -602,6 +621,15 @@ export function Library() {
                   className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium text-text-primary hover:bg-elevated"
                 >
                   <Move className="h-3.5 w-3.5" /> Move
+                </button>
+                <button
+                  onClick={() => setFixing({
+                    videos: filtered.filter(v => selectedIds.has(v.id)),
+                    scope: null,
+                  })}
+                  className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium text-text-primary hover:bg-elevated"
+                >
+                  <Wrench className="h-3.5 w-3.5" /> Fix
                 </button>
                 <button
                   onClick={() => setDeleteVideos(filtered.filter(v => selectedIds.has(v.id)))}
@@ -788,6 +816,17 @@ export function Library() {
         confirmLabel="Delete"
         danger
         onConfirm={() => deleteMutation.mutateAsync(deleteVideos.map(v => v.id))}
+      />
+
+      {/* Fix — bulk selection or a whole folder */}
+      <FixVideosModal
+        open={fixing !== null}
+        onClose={() => setFixing(null)}
+        videos={fixing?.videos ?? []}
+        {...(fixing?.scope ? { scope: fixing.scope } : {})}
+        onConfirm={options => (fixing?.scope
+          ? repairFolderMutation.mutateAsync(options)
+          : repairManyMutation.mutateAsync({ ids: (fixing?.videos ?? []).map(v => v.id), options }))}
       />
 
       {/* Video move */}

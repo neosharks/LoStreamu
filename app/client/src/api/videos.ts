@@ -1,6 +1,6 @@
 import api from './client';
 import type {
-  Video, FolderTree, ServerStats, VideoHealth, FolderHealth, RepairJob, RepairPlan,
+  Video, FolderTree, ServerStats, VideoHealth, FolderHealth, RepairJob, RepairOptions,
 } from '../types';
 
 export interface PreviewMeta {
@@ -110,12 +110,18 @@ export const repairApi = {
       params: { folder, ...(deep ? {} : { deep: '0' }) },
     }).then(r => r.data),
 
-  start: (id: string, plan?: RepairPlan) =>
-    api.post<RepairJob>(`/videos/${id}/repair`, plan ? { plan } : {}).then(r => r.data),
+  start: (id: string, options: RepairOptions = {}) =>
+    api.post<RepairJob>(`/videos/${id}/repair`, options).then(r => r.data),
 
-  startFolder: (folder: string, deep = true) =>
+  /** Repair a hand-picked selection. */
+  startMany: (ids: string[], options: RepairOptions = {}) =>
     api.post<{ ok: boolean; queued: number; jobs: RepairJob[] }>(
-      '/repair/folder', { folder, deep },
+      '/repair/videos', { ids, ...options },
+    ).then(r => r.data),
+
+  startFolder: (folder: string, deep = true, options: RepairOptions = {}) =>
+    api.post<{ ok: boolean; queued: number; jobs: RepairJob[] }>(
+      '/repair/folder', { folder, deep, ...options },
     ).then(r => r.data),
 
   jobs: () => api.get<RepairJob[]>('/repair').then(r => r.data),

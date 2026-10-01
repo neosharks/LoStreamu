@@ -8,9 +8,9 @@ import { classifyHealth, healthOf, probeFastStart } from './health';
 import {
   getLibrary, findById, rescan, buildMeta, purgeMetaEntry, makeVideoId, getMediaRoot,
 } from './library';
-import { rekeyFavorite } from './favorites';
-import { rekeyFaces } from './faces/store';
-import type { RepairJob, RepairPlan, VideoItem } from '../types';
+import { rekeyFavorite, forgetFavorite } from './favorites';
+import { rekeyFaces, forgetFaces } from './faces/store';
+import type { RepairJob, RepairOptions, RepairPlan, RepairStatus, VideoItem } from '../types';
 
 // ── Repair ────────────────────────────────────────────────────────────────────
 // Turns a video the browser refuses into one it plays, and never destroys the
@@ -27,6 +27,11 @@ import type { RepairJob, RepairPlan, VideoItem } from '../types';
 //
 // One repair at a time: a transcode saturates the box, and playback for whoever
 // is watching has to keep winning.
+//
+// A repair can also be asked to DELETE a video it cannot fix. That is off by
+// default and never inferred: a file that truly cannot be rebuilt is junk, but a
+// repair also fails when the disk is full or the process is killed, and those
+// must not cost anyone a video.
 
 const SAFE_VIDEO = new Set(['h264', 'avc1']);
 const SAFE_AUDIO = new Set(['aac', 'mp4a']);
@@ -137,7 +142,7 @@ async function verifyRepaired(out: string): Promise<string | null> {
   return health.level === 'broken' ? health.issues[0] ?? 'the rebuilt file still will not play' : null;
 }
 
-async function runJob(job: RepairJob, video: VideoItem): Promise<void> {
+async function runJob(job: RepairJob, video: VideoItem): Promise<RepairStatus> {
   const original = video.absPath;
   const originalRel = video.relPath;
   const stat = fs.statSync(original);
@@ -191,6 +196,7 @@ async function runJob(job: RepairJob, video: VideoItem): Promise<void> {
       job.error = (err as Error).message;
     }
   }
+  return job.status;
 }
 
 function sweepFinished(): void {
@@ -200,16 +206,31 @@ function sweepFinished(): void {
   }
 }
 
+/** Remove a video the repair could not rescue, and everything that pointed at it. */
+function discardVideo(video: VideoItem): boolean {
+  try { fs.rmSync(video.absPath, { force: true }); }
+  catch { return false; }
+  for (const p of [thumbPath(video.id), spritePath(video.id), vttPath(video.id)]) {
+    try { fs.rmSync(p, { force: true }); } catch { /* already gone */ }
+  }
+  invalidateThumb(video.id);
+  purgeMetaEntry(video.id);
+  forgetFavorite(video.relPath);
+  forgetFaces(video.relPath);
+  rescan();
+  return true;
+}
+
 /**
  * Queue a repair. Returns the existing job when one is already pending for this
  * video, so double-clicking Fix never starts two encodes of the same file.
  */
-export function enqueueRepair(video: VideoItem, plan?: RepairPlan): RepairJob {
+export function enqueueRepair(video: VideoItem, options: RepairOptions = {}): RepairJob {
   sweepFinished();
   for (const job of jobs.values()) {
     if (job.videoId === video.id && (job.status === 'queued' || job.status === 'running')) return job;
   }
-  const chosen = plan ?? healthOf(video)?.plan ?? 'remux';
+  const chosen = options.plan ?? healthOf(video)?.plan ?? 'remux';
   const job: RepairJob = {
     id: crypto.randomBytes(6).toString('hex'),
     videoId: video.id,
@@ -227,7 +248,16 @@ export function enqueueRepair(video: VideoItem, plan?: RepairPlan): RepairJob {
     job.status = 'running';
     // Re-resolve: a repair that ran before this one may have renamed the file.
     const current = findById(job.videoId) ?? video;
-    await runJob(job, current);
+    const outcome = await runJob(job, current);
+    // Only a genuine failure removes anything: a cancelled job leaves the file
+    // exactly as it was.
+    if (options.deleteIfUnfixable && outcome === 'error') {
+      const stillThere = findById(job.videoId) ?? current;
+      if (discardVideo(stillThere)) {
+        job.deleted = true;
+        job.error = `${job.error ?? 'Could not be repaired'} — deleted.`;
+      }
+    }
   }).catch(() => {
     job.status = 'error';
     job.error = job.error || 'Repair failed to start';
@@ -236,7 +266,7 @@ export function enqueueRepair(video: VideoItem, plan?: RepairPlan): RepairJob {
 }
 
 /** Queue every video in `folder` that is not already playable. */
-export function enqueueFolderRepair(folder: string, deep = true): RepairJob[] {
+export function enqueueFolderRepair(folder: string, deep = true, options: RepairOptions = {}): RepairJob[] {
   const prefix = folder ? folder + '/' : '';
   return getLibrary()
     .filter(v => v.folder === folder || (deep && v.folder.startsWith(prefix)))
@@ -244,7 +274,17 @@ export function enqueueFolderRepair(folder: string, deep = true): RepairJob[] {
       const plan = healthOf(v)?.plan;
       return plan === 'remux' || plan === 'transcode';
     })
-    .map(v => enqueueRepair(v));
+    .map(v => enqueueRepair(v, options));
+}
+
+/** Queue a repair for each of `ids` — what the library's bulk selection uses. */
+export function enqueueRepairs(ids: string[], options: RepairOptions = {}): RepairJob[] {
+  const jobs: RepairJob[] = [];
+  for (const id of ids) {
+    const video = findById(id);
+    if (video) jobs.push(enqueueRepair(video, options));
+  }
+  return jobs;
 }
 
 export function listRepairJobs(): RepairJob[] {

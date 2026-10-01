@@ -3,7 +3,9 @@ import { z } from 'zod';
 import { requireAuth } from '../middleware/auth';
 import { findById, getLibrary } from '../services/library';
 import { healthOf, resolveHealth } from '../services/health';
-import { enqueueRepair, enqueueFolderRepair, listRepairJobs, cancelRepair } from '../services/repair';
+import {
+  enqueueRepair, enqueueRepairs, enqueueFolderRepair, listRepairJobs, cancelRepair,
+} from '../services/repair';
 
 const router = Router();
 
@@ -33,17 +35,37 @@ router.get('/folders/health', requireAuth, (req, res) => {
   res.json({ broken, warn, total: broken + warn });
 });
 
+// `deleteIfUnfixable` destroys the original when the rebuild fails, so it is
+// never inferred — the caller has to ask for it explicitly, every time.
+const RepairOptionsSchema = z.object({
+  plan: z.enum(['remux', 'transcode']).optional(),
+  deleteIfUnfixable: z.boolean().optional(),
+});
+
 router.post('/videos/:id/repair', requireAuth, (req, res) => {
   const v = findById(req.params['id'] as string);
   if (!v) { res.status(404).json({ error: 'Not found' }); return; }
-  const plan = z.enum(['remux', 'transcode']).safeParse(req.body?.plan);
-  res.json(enqueueRepair(v, plan.success ? plan.data : undefined));
+  const parsed = RepairOptionsSchema.safeParse(req.body ?? {});
+  if (!parsed.success) { res.status(400).json({ error: 'Invalid repair options.' }); return; }
+  res.json(enqueueRepair(v, parsed.data));
+});
+
+// Repair a hand-picked set — what the library's bulk selection sends.
+router.post('/repair/videos', requireAuth, (req, res) => {
+  const schema = RepairOptionsSchema.extend({ ids: z.array(z.string()).min(1) });
+  const parsed = schema.safeParse(req.body ?? {});
+  if (!parsed.success) { res.status(400).json({ error: 'ids array required.' }); return; }
+  const { ids, ...options } = parsed.data;
+  const jobs = enqueueRepairs(ids, options);
+  res.json({ ok: true, queued: jobs.length, jobs });
 });
 
 router.post('/repair/folder', requireAuth, (req, res) => {
+  const parsed = RepairOptionsSchema.safeParse(req.body ?? {});
+  if (!parsed.success) { res.status(400).json({ error: 'Invalid repair options.' }); return; }
   const folder = String(req.body?.folder ?? '').replace(/^[/\\]+/, '');
   const deep = req.body?.deep !== false;
-  const jobs = enqueueFolderRepair(folder, deep);
+  const jobs = enqueueFolderRepair(folder, deep, parsed.data);
   res.json({ ok: true, queued: jobs.length, jobs });
 });
 

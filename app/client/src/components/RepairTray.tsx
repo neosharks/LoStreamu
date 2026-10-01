@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Wrench, X, Check, AlertTriangle, Loader2 } from 'lucide-react';
+import { Wrench, X, Check, AlertTriangle, Loader2, Trash2 } from 'lucide-react';
 import { repairApi } from '@/api/videos';
 import { cn } from '@/lib/utils';
 import type { RepairJob } from '@/types';
@@ -84,6 +84,7 @@ export function RepairTray() {
             <div className="flex items-center gap-2">
               {job.status === 'running' ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-accent" />
                 : job.status === 'done' ? <Check className="h-3.5 w-3.5 shrink-0 text-accent" />
+                : job.deleted ? <Trash2 className="h-3.5 w-3.5 shrink-0 text-danger" />
                 : job.status === 'error' ? <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-danger" />
                 : <Wrench className="h-3.5 w-3.5 shrink-0 text-text-subtle" />}
               <p className="min-w-0 flex-1 truncate text-xs font-medium text-text-primary">{job.name}</p>
@@ -102,6 +103,7 @@ export function RepairTray() {
                 : job.status === 'running' ? (job.plan === 'transcode' ? `Re-encoding · ${job.progress}%` : `Repacking · ${job.progress}%`)
                 : job.status === 'done' ? 'Fixed — it plays now'
                 : job.status === 'cancelled' ? 'Cancelled — the original is untouched'
+                : job.deleted ? (job.error || 'Could not be fixed — deleted')
                 : job.error || 'Failed'}
             </p>
             {ACTIVE.includes(job.status) && (

@@ -69,8 +69,16 @@ export interface RepairJob {
   status: RepairStatus;
   progress: number;
   newVideoId?: string;
+  /** True when the file was removed because it could not be repaired. */
+  deleted?: boolean;
   error?: string;
   startedAt: number;
+}
+
+export interface RepairOptions {
+  plan?: RepairPlan;
+  /** Delete the video when it cannot be rebuilt into something playable. */
+  deleteIfUnfixable?: boolean;
 }
 
 // ── Faces ─────────────────────────────────────────────────────────────────────
