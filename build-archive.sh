@@ -29,8 +29,10 @@ echo "Version: $VERSION"
 #   --others  : new files not yet committed, so a release can be built before the
 #               commit lands
 #   --exclude-standard : honour .gitignore
+# -C must precede -T: GNU tar applies it only to names that follow it, and
+# silently warns "-C has no effect" when it comes after the list.
 git -C "$SRC" ls-files --cached --others --exclude-standard -z \
-  | tar -czf "$OUT" --null -T - -C "$SRC"
+  | tar -czf "$OUT" -C "$SRC" --null -T -
 
 echo "Wrote $OUT ($(du -h "$OUT" | cut -f1))"
 echo "Entries packed:"
