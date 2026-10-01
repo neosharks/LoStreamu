@@ -93,11 +93,21 @@ export interface PersonInVideo {
   name: string;
 }
 
+/** How faces are grouped into people. Changing these re-groups in seconds. */
+export interface FaceGrouping {
+  /** How alike two faces must be to count as the same person (0-1). */
+  threshold: number;
+  /** Faces needed around one face before it can anchor a person. */
+  minFaces: number;
+}
+
 export interface FaceIndexStatus {
   running: boolean;
   done: number;
   total: number;
   current?: string;
+  /** Which stage is running — the three take very different amounts of time. */
+  phase?: 'models' | 'scanning' | 'grouping';
   people: number;
   error?: string;
   /** 0-100 while the first run downloads the models. */
@@ -106,7 +116,10 @@ export interface FaceIndexStatus {
   indexed: number;
   library: number;
   modelsReady: boolean;
-  model: 'small' | 'large';
+  /** "detector/recogniser", e.g. "small/large". */
+  model: string;
+  grouping: FaceGrouping;
+  faces: { total: number; grouped: number };
 }
 
 export interface FolderTree {

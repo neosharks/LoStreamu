@@ -8,10 +8,11 @@ import assert from 'assert';
 import {
   letterbox, anchorCenters, distanceToBox, distanceToPoints, iou, nms,
   similarityTransform, invertAffine, warpAffine, cropSquare,
-  l2Normalize, cosine, mergeCentroid, ARCFACE_TEMPLATE,
+  l2Normalize, cosine, mergeCentroid, packEmbedding, unpackEmbedding, ARCFACE_TEMPLATE,
   type Detection, type RgbImage,
 } from '../src/services/faces/geometry';
-import { sampleTimes } from '../src/services/faces';
+import { clusterFaces, type FaceVector } from '../src/services/faces/cluster';
+import { sampleTimes, pickSamples } from '../src/services/faces';
 
 let passed = 0;
 async function test(name: string, fn: () => Promise<void> | void) {
@@ -164,6 +165,110 @@ const detection = (x1: number, y1: number, x2: number, y2: number, score: number
   await test('sampleTimes: a short clip still gets at least one frame', () => {
     assert.equal(sampleTimes(3).length, 1);
     assert.equal(sampleTimes(0).length, 1);
+  });
+
+  // ── Embedding storage ──────────────────────────────────────────────────────
+
+  await test('packEmbedding: survives the round trip with cosine intact', () => {
+    const v = l2Normalize(Array.from({ length: 512 }, (_, i) => Math.sin(i * 0.37)));
+    const back = unpackEmbedding(packEmbedding(v));
+    assert.equal(back.length, 512);
+    // One byte per dimension, so the vector moves a little — but nowhere near
+    // enough to matter against a grouping threshold.
+    assert.ok(cosine(v, back) > 0.9999, `cosine after round trip: ${cosine(v, back)}`);
+  });
+
+  // ── Grouping ───────────────────────────────────────────────────────────────
+  // Synthetic faces: a "person" is a direction in the vector space, and their
+  // faces are that direction nudged about, the way pose and lighting nudge a
+  // real embedding.
+
+  const rand = (seed: number) => { let x = seed; return () => (x = (x * 1103515245 + 12345) % 2147483648) / 2147483648; };
+
+  function personVectors(id: number, count: number, spread: number, seed = 1): Float32Array[] {
+    const next = rand(seed + id * 977);
+    const base = l2Normalize(Array.from({ length: 64 }, () => next() - 0.5));
+    return Array.from({ length: count }, () =>
+      l2Normalize(Array.from(base, v => v + (next() - 0.5) * spread)));
+  }
+
+  const asFaces = (groups: Float32Array[][]): FaceVector[] =>
+    groups.flatMap((vs, g) => vs.map((embedding, i) => ({ id: `p${g}-f${i}`, embedding })));
+
+  await test('clusterFaces: two separate people come out as two people', () => {
+    const faces = asFaces([personVectors(0, 6, 0.25), personVectors(1, 6, 0.25)]);
+    const { groups, count } = clusterFaces(faces, { threshold: 0.35, minFaces: 2 });
+    assert.equal(count, 2);
+    const a = new Set(faces.slice(0, 6).map(f => groups.get(f.id)));
+    const b = new Set(faces.slice(6).map(f => groups.get(f.id)));
+    assert.equal(a.size, 1, 'first person split');
+    assert.equal(b.size, 1, 'second person split');
+    assert.notEqual([...a][0], [...b][0], 'two people were fused');
+  });
+
+  await test('clusterFaces: a person photographed across a drifting range stays one person', () => {
+    // The exact case that broke the first version: each shot resembles the next,
+    // but the first and last are far apart. Matching against an average splits
+    // them; matching against individual faces keeps the chain together.
+    const next = rand(7);
+    const base = l2Normalize(Array.from({ length: 64 }, () => next() - 0.5));
+    const drift = l2Normalize(Array.from({ length: 64 }, () => next() - 0.5));
+    const chain = Array.from({ length: 8 }, (_, k) =>
+      l2Normalize(Array.from(base, (v, i) => v + drift[i]! * k * 0.22)));
+    assert.ok(cosine(chain[0]!, chain[7]!) < 0.6, 'ends should be far apart for this test to mean anything');
+
+    const faces = chain.map((embedding, i) => ({ id: `c${i}`, embedding }));
+    const { count } = clusterFaces(faces, { threshold: 0.5, minFaces: 2 });
+    assert.equal(count, 1, 'the chain was split into several people');
+  });
+
+  await test('clusterFaces: minFaces decides whether a thin cluster is a person', () => {
+    // Two faces that resemble each other and nothing else. Whether that counts
+    // as a person is exactly what minFaces is for.
+    const pair = personVectors(3, 2, 0.05);
+    const crowd = personVectors(4, 6, 0.2);
+    const faces = asFaces([pair, crowd]);
+    assert.equal(clusterFaces(faces, { threshold: 0.5, minFaces: 2 }).count, 2, 'a pair should be a person at minFaces 2');
+    const strict = clusterFaces(faces, { threshold: 0.5, minFaces: 3 });
+    assert.equal(strict.groups.get('p0-f0'), undefined, 'a pair should not anchor a person at minFaces 3');
+  });
+
+  await test('clusterFaces: a lone face is not a person', () => {
+    const faces = [...asFaces([personVectors(0, 5, 0.2)]), { id: 'loner', embedding: personVectors(9, 1, 0)[0]! }];
+    const { groups, count } = clusterFaces(faces, { threshold: 0.4, minFaces: 2 });
+    assert.equal(count, 1);
+    assert.equal(groups.get('loner'), undefined, 'a single unexplained face became a person');
+  });
+
+  await test('clusterFaces: a manual merge beats the geometry', () => {
+    const faces = asFaces([personVectors(0, 5, 0.2), personVectors(1, 5, 0.2)]);
+    const linked = clusterFaces(faces, { threshold: 0.4, minFaces: 2 }, [['p0-f0', 'p1-f0']]);
+    assert.equal(linked.count, 1, 'a must-link pair was ignored');
+  });
+
+  await test('clusterFaces: an empty library groups into nobody', () => {
+    const { groups, count } = clusterFaces([], { threshold: 0.4, minFaces: 2 });
+    assert.equal(count, 0);
+    assert.equal(groups.size, 0);
+  });
+
+  await test('pickSamples: prefers clear frames spread across the video', () => {
+    const samples = [
+      { embedding: new Float32Array(1), score: 0.9, at: 10 },
+      { embedding: new Float32Array(1), score: 0.88, at: 10.5 },  // nearly the same moment
+      { embedding: new Float32Array(1), score: 0.8, at: 60 },
+      { embedding: new Float32Array(1), score: 0.7, at: 120 },
+    ];
+    const picked = pickSamples(samples, 3, 4);
+    assert.deepEqual(picked.map(s => s.at), [10, 60, 120]);
+  });
+
+  await test('pickSamples: a short clip still yields frames when none are far apart', () => {
+    const samples = [
+      { embedding: new Float32Array(1), score: 0.9, at: 1 },
+      { embedding: new Float32Array(1), score: 0.8, at: 1.2 },
+    ];
+    assert.equal(pickSamples(samples, 2, 10).length, 2);
   });
 
   console.log(`\n${passed} passed`);

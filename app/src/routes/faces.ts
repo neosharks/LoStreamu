@@ -5,12 +5,12 @@ import { requireAuth } from '../middleware/auth';
 import { getLibrary } from '../services/library';
 import { listFavorites } from '../services/favorites';
 import { projectVideo } from '../services/videoView';
-import { startIndexing, stopIndexing, getIndexStatus } from '../services/faces';
+import { startIndexing, stopIndexing, getIndexStatus, regroupNow } from '../services/faces';
 import {
   listPeople, videosForPerson, peopleInVideo, renamePerson, mergePeople, deletePerson,
-  faceThumbPath, resetFaces, indexedCount,
+  faceThumbPath, resetFaces, indexedCount, faceCount, getClusterSettings,
 } from '../services/faces/store';
-import { modelsPresent, modelSize } from '../services/faces/models';
+import { modelsPresent, detectionSize, recognitionSize } from '../services/faces/models';
 
 const router = Router();
 
@@ -20,8 +20,25 @@ router.get('/faces/status', requireAuth, (_req, res) => {
     indexed: indexedCount(),
     library: getLibrary().length,
     modelsReady: modelsPresent(),
-    model: modelSize(),
+    model: `${detectionSize()}/${recognitionSize()}`,
+    grouping: getClusterSettings(),
+    faces: faceCount(),
   });
+});
+
+// Re-derive everyone from the embeddings already on disk. Seconds of work, and
+// the only thing needed after changing how strictly faces are grouped — the
+// library does not have to be watched again.
+router.post('/faces/regroup', requireAuth, (req, res) => {
+  const schema = z.object({
+    threshold: z.number().min(0).max(0.95).optional(),
+    minFaces: z.number().int().min(1).max(10).optional(),
+  });
+  const parsed = schema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.issues[0]?.message ?? 'Invalid settings.' }); return;
+  }
+  res.json(regroupNow(parsed.data));
 });
 
 // Kick off a scan. Returns immediately — poll /faces/status for progress.

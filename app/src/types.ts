@@ -167,15 +167,25 @@ export interface Person {
 
 export interface FaceIndexStatus {
   running: boolean;
-  /** Videos already processed in the current (or last) run. */
+  /** Videos processed in the current run, or faces compared while grouping. */
   done: number;
   total: number;
   /** Name of the video being scanned right now. */
   current?: string;
+  /** Which stage the run is in — the three have very different durations. */
+  phase?: 'models' | 'scanning' | 'grouping';
   people: number;
   /** Set when the run stopped early — a missing model, no ffmpeg, etc. */
   error?: string;
   /** Model download progress, 0-100, while the first run fetches them. */
   modelProgress?: number;
   finishedAt?: number;
+}
+
+/** How faces are grouped into people. Changing these re-groups in seconds. */
+export interface FaceGrouping {
+  /** How alike two faces must be to count as the same person (0-1). */
+  threshold: number;
+  /** Faces needed around one face before it can anchor a person. */
+  minFaces: number;
 }

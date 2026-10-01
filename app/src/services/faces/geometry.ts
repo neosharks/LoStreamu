@@ -212,6 +212,37 @@ export function cosine(a: ArrayLike<number>, b: ArrayLike<number>): number {
   return dot;
 }
 
+// ── Storing embeddings ────────────────────────────────────────────────────────
+// Every face vector is kept on disk so people can be re-grouped without
+// re-watching the library. At 512 floats each that would be large as JSON, so
+// each component is squeezed into one signed byte and base64'd. A flat scale
+// wastes most of the range — on a 512-d unit vector the components sit around
+// ±0.04 — so each vector is scaled by its own peak, which is stored alongside.
+// The round trip then costs under 0.0002 of cosine similarity, nothing against
+// any threshold that matters, for roughly an eighth of the size.
+
+export function packEmbedding(v: Float32Array): string {
+  let peak = 0;
+  for (let i = 0; i < v.length; i++) peak = Math.max(peak, Math.abs(v[i]!));
+  const scale = peak > 0 ? 127 / peak : 1;
+  const buf = Buffer.allocUnsafe(4 + v.length);
+  buf.writeFloatLE(scale, 0);
+  for (let i = 0; i < v.length; i++) {
+    buf.writeInt8(Math.max(-127, Math.min(127, Math.round(v[i]! * scale))), 4 + i);
+  }
+  return buf.toString('base64');
+}
+
+export function unpackEmbedding(packed: string): Float32Array {
+  const buf = Buffer.from(packed, 'base64');
+  const scale = buf.readFloatLE(0) || 1;
+  const out = new Float32Array(buf.length - 4);
+  for (let i = 0; i < out.length; i++) out[i] = buf.readInt8(4 + i) / scale;
+  // Re-normalise: rounding nudges the length away from 1, and cosine assumes
+  // unit vectors on both sides.
+  return l2Normalize(out);
+}
+
 /** Running mean of unit vectors, renormalised — a person's centroid. */
 export function mergeCentroid(
   centroid: ArrayLike<number>, count: number, incoming: ArrayLike<number>,

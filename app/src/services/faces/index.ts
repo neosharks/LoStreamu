@@ -8,36 +8,57 @@ import { embedFace, unloadEmbedder } from './embed';
 import { extractFrame, writeJpeg } from './frames';
 import { ensureModels } from './models';
 import {
-  assignPerson, isIndexed, listPeople, newFaceId, recordVideo, faceThumbPath,
-  TRACK_THRESHOLD, type VideoPersonRef,
+  isIndexed, listPeople, newFaceId, recordVideo, regroupPeople, faceThumbPath,
+  type NewFace,
 } from './store';
 import type { FaceIndexStatus, VideoItem } from '../../types';
 
 // ── The scan ──────────────────────────────────────────────────────────────────
-// Walk the library a video at a time, sample frames, and group every face found
-// into people. Deliberately modest about resources: one video at a time, one
-// frame at a time, ffmpeg at nice 19 and the ONNX session leaving a core free.
-// It is slower than it could be, and it stays invisible to whoever is watching
-// something — which is the trade a homelab box wants.
+// Walk the library a video at a time, sample frames, and store an embedding for
+// every face found. Deliberately modest about resources: one video at a time,
+// one frame at a time, ffmpeg at nice 19 and the ONNX session leaving a core
+// free. It is slower than it could be, and it stays invisible to whoever is
+// watching something — which is the trade a homelab box wants.
 //
-// Within a video, repeat appearances of the same face are folded into a "track"
-// before anything global happens. A 40-minute video yields dozens of faces of
-// the same handful of people; collapsing them first keeps the people index small
-// and stops one long video from dominating a person's centroid.
+// Within a video, repeat appearances of one face are folded into a "track", and
+// several frames of that track are kept rather than one. A single shot captures
+// one pose; keeping a spread of them is what lets the grouping pass recognise
+// the same person in a different video, where the pose and lighting differ.
+// Only the clearest frame of each track gets a picture saved — the rest are
+// embeddings alone, which cost a few hundred bytes each.
 
 /** Seconds between sampled frames, before the per-video cap applies. */
 const SAMPLE_INTERVAL = 10;
-/** Frames per video, however long it is. 60 frames ≈ 20 s of work per video. */
+/** Frames per video, however long it is. */
 const MAX_SAMPLES = 60;
 /** Faces kept per frame, best score first — a crowd scene is not worth indexing. */
 const MAX_FACES_PER_FRAME = 8;
 /** Distinct people the scanner will track inside one video. */
 const MAX_TRACKS_PER_VIDEO = 30;
+/** Embeddings kept per track, spread across the video. */
+const SAMPLES_PER_TRACK = 4;
+/** Seconds two kept samples of one track should be apart, so they differ. */
+const SAMPLE_GAP = 4;
+/**
+ * Detection confidence a face needs before it is stored. A doubtful detection is
+ * often not a face at all, and its embedding lands anywhere — which is precisely
+ * what seeds spurious people.
+ */
+const MIN_FACE_SCORE = 0.65;
+/** Same video, same lighting — the bar for folding repeat appearances together. */
+const TRACK_THRESHOLD = 0.5;
 const THUMB_SIZE = 160;
+
+interface Sample {
+  embedding: Float32Array;
+  score: number;
+  at: number;
+}
 
 interface Track {
   centroid: Float32Array;
   count: number;
+  samples: Sample[];
   bestScore: number;
   bestAt: number;
   thumbnail: RgbImage;
@@ -49,6 +70,7 @@ interface RunState {
   done: number;
   total: number;
   current?: string;
+  phase?: 'models' | 'scanning' | 'grouping';
   error?: string;
   modelProgress?: number;
   finishedAt?: number;
@@ -62,6 +84,7 @@ export function getIndexStatus(): FaceIndexStatus {
     done: state.done,
     total: state.total,
     ...(state.current !== undefined && { current: state.current }),
+    ...(state.phase !== undefined && { phase: state.phase }),
     people: listPeople().length,
     ...(state.error !== undefined && { error: state.error }),
     ...(state.modelProgress !== undefined && { modelProgress: state.modelProgress }),
@@ -81,6 +104,27 @@ export function sampleTimes(duration: number): number[] {
   return Array.from({ length: count }, (_, i) => Math.min(length - 0.5, (i + 0.5) * step));
 }
 
+/**
+ * Pick which frames of a track to keep: clearest first, but preferring ones far
+ * enough apart in time to actually show something different. Pure, so the
+ * selection rule is testable on its own.
+ */
+export function pickSamples(samples: Sample[], limit = SAMPLES_PER_TRACK, gap = SAMPLE_GAP): Sample[] {
+  const byScore = [...samples].sort((a, b) => b.score - a.score);
+  const kept: Sample[] = [];
+  for (const sample of byScore) {
+    if (kept.length >= limit) break;
+    if (kept.every(k => Math.abs(k.at - sample.at) >= gap)) kept.push(sample);
+  }
+  // A short clip may have nothing far enough apart; take the best regardless
+  // rather than storing a single frame of a person who is on screen throughout.
+  for (const sample of byScore) {
+    if (kept.length >= limit) break;
+    if (!kept.includes(sample)) kept.push(sample);
+  }
+  return kept;
+}
+
 /** Fold a face into the track it belongs to, or start a new one. */
 function addToTracks(
   tracks: Track[], embedding: Float32Array, detection: Detection, frame: RgbImage, at: number,
@@ -95,6 +139,7 @@ function addToTracks(
   if (best && bestSimilarity >= TRACK_THRESHOLD) {
     best.centroid = mergeCentroid(best.centroid, best.count, embedding);
     best.count++;
+    best.samples.push({ embedding, score: detection.score, at });
     // Keep the clearest shot of this person as their picture for this video.
     if (detection.score > best.bestScore) {
       best.bestScore = detection.score;
@@ -107,6 +152,7 @@ function addToTracks(
   tracks.push({
     centroid: embedding,
     count: 1,
+    samples: [{ embedding, score: detection.score, at }],
     bestScore: detection.score,
     bestAt: at,
     thumbnail: cropSquare(frame, detection.box, THUMB_SIZE),
@@ -152,7 +198,10 @@ async function scanVideo(video: VideoItem): Promise<void> {
     try { detections = await detectFaces(frame); }
     catch { continue; }
 
-    const top = detections.sort((a, b) => b.score - a.score).slice(0, MAX_FACES_PER_FRAME);
+    const top = detections
+      .filter(d => d.score >= MIN_FACE_SCORE)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, MAX_FACES_PER_FRAME);
     for (const detection of top) {
       if (state.cancelled) return;
       try {
@@ -163,18 +212,21 @@ async function scanVideo(video: VideoItem): Promise<void> {
   }
   if (state.cancelled) return;
 
-  // Match each track to a person, then keep one reference per person per video.
-  const byPerson = new Map<string, VideoPersonRef>();
+  // One picture per track — the clearest frame — plus a spread of embeddings
+  // that carry no picture and exist purely so grouping has something to work
+  // with beyond a single pose.
+  const faces: NewFace[] = [];
   for (const track of tracks) {
-    const faceId = newFaceId();
-    const { personId } = assignPerson(track.centroid, faceId);
-    const existing = byPerson.get(personId);
-    if (existing && existing.score >= track.bestScore) continue;
-    try { await writeJpeg(track.thumbnail, faceThumbPath(faceId)); }
+    const thumbId = newFaceId();
+    try { await writeJpeg(track.thumbnail, faceThumbPath(thumbId)); }
     catch { continue; } // no picture, no entry — the People page needs a face
-    byPerson.set(personId, { personId, faceId, score: track.bestScore, at: track.bestAt });
+    faces.push({ id: thumbId, score: track.bestScore, at: track.bestAt, embedding: track.centroid, thumb: true });
+    for (const sample of pickSamples(track.samples)) {
+      if (sample.at === track.bestAt) continue;
+      faces.push({ id: newFaceId(), score: sample.score, at: sample.at, embedding: sample.embedding });
+    }
   }
-  recordVideo(video.relPath, stat, [...byPerson.values()]);
+  recordVideo(video.relPath, stat, faces);
 }
 
 export interface IndexOptions {
@@ -218,6 +270,7 @@ export function startIndexing(options: IndexOptions = {}): FaceIndexStatus {
       fs.mkdirSync(FACE_THUMB_DIR, { recursive: true });
       // First run only: pull the models down, reporting progress so the UI can
       // explain why nothing is happening yet.
+      state.phase = 'models';
       state.modelProgress = 0;
       await ensureModels(pct => { state.modelProgress = pct; });
       delete state.modelProgress;
@@ -225,6 +278,7 @@ export function startIndexing(options: IndexOptions = {}): FaceIndexStatus {
       // a library that has only just been rescanned has neither.
       await buildMeta();
 
+      state.phase = 'scanning';
       for (const video of queue) {
         if (state.cancelled) break;
         state.current = video.name;
@@ -232,6 +286,16 @@ export function startIndexing(options: IndexOptions = {}): FaceIndexStatus {
         catch { /* a video that cannot be scanned must not stop the run */ }
         state.done++;
       }
+
+      // Faces are stored without an owner; who they belong to is decided here,
+      // across the whole library at once, so the answer cannot depend on the
+      // order the videos happened to be scanned in.
+      delete state.current;
+      state.phase = 'grouping';
+      regroupPeople(undefined, (done, total) => {
+        state.done = done;
+        state.total = total;
+      });
     } catch (err) {
       state.error = (err as Error).message;
     } finally {
@@ -241,6 +305,37 @@ export function startIndexing(options: IndexOptions = {}): FaceIndexStatus {
       unloadEmbedder();
       delete state.modelProgress;
       delete state.current;
+      delete state.phase;
+      state.running = false;
+      state.finishedAt = Date.now();
+    }
+  })();
+
+  return getIndexStatus();
+}
+
+/**
+ * Re-group everyone from the stored embeddings, with no re-scanning. This is
+ * what makes the grouping settings usable: changing them is seconds of work on
+ * data already on disk, not hours of video.
+ */
+export function regroupNow(options?: { threshold?: number; minFaces?: number }): FaceIndexStatus {
+  if (state.running) return getIndexStatus();
+  state.running = true;
+  state.cancelled = false;
+  state.phase = 'grouping';
+  state.done = 0;
+  state.total = 0;
+  delete state.error;
+  delete state.finishedAt;
+
+  void (async () => {
+    try {
+      regroupPeople(options, (done, total) => { state.done = done; state.total = total; });
+    } catch (err) {
+      state.error = (err as Error).message;
+    } finally {
+      delete state.phase;
       state.running = false;
       state.finishedAt = Date.now();
     }

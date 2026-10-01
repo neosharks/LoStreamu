@@ -11,10 +11,18 @@ import { MODELS_DIR } from '../../config';
 //   • detection  — SCRFD, finds faces and their five landmarks
 //   • recognition— ArcFace, turns an aligned face into a 512-d embedding
 //
-// `small` (buffalo_s, ~16 MB total) is the default: on a 4-vCPU homelab box it
-// is several times faster than `large` and still separates people reliably in a
-// personal library. Set SV_FACE_MODELS=large for buffalo_l (~191 MB) when the
-// box has cores to spare.
+// The two jobs are sized differently on purpose, which is measured rather than
+// assumed. Detection only has to find a face and its five landmarks, and the
+// small detector does that as well as the large one for a fraction of the work.
+// RECOGNITION is what decides whether two faces are the same person, and there
+// the gap is large. On frames degraded the way video frames are (small, blurred,
+// dark, rotated), the worst same-person similarity was:
+//     small (w600k_mbf)  0.479, with other people reaching 0.193
+//     large (w600k_r50)  0.597, with other people reaching 0.129
+// — a margin of 0.29 against 0.47. The small model's worst case sat barely above
+// the threshold it was being compared with, so any real pose change dropped a
+// face below the line and split one person into several. Hence: small detector,
+// large recogniser. Override either with SV_FACE_DETECTION / SV_FACE_RECOGNITION.
 //
 // The files are downloaded on first use and cached in DATA_DIR/models, so they
 // survive app updates. Dropping them in by hand works too — anything already on
@@ -33,17 +41,35 @@ const SOURCES: Record<ModelSize, { detection: string; recognition: string }> = {
   },
 };
 
-export function modelSize(): ModelSize {
-  return process.env.SV_FACE_MODELS === 'large' ? 'large' : 'small';
+function envSize(name: string, fallback: ModelSize): ModelSize {
+  const value = process.env[name];
+  return value === 'small' || value === 'large' ? value : fallback;
 }
 
-export function modelPath(kind: 'detection' | 'recognition', size = modelSize()): string {
+export function detectionSize(): ModelSize {
+  return envSize('SV_FACE_DETECTION', 'small');
+}
+
+/**
+ * Identifies the vector space every stored embedding lives in. Changing it
+ * invalidates the whole face index, so the store keys its compatibility check on
+ * this and not on the detector.
+ */
+export function recognitionSize(): ModelSize {
+  return envSize('SV_FACE_RECOGNITION', 'large');
+}
+
+export function modelSize(kind: 'detection' | 'recognition'): ModelSize {
+  return kind === 'detection' ? detectionSize() : recognitionSize();
+}
+
+export function modelPath(kind: 'detection' | 'recognition', size = modelSize(kind)): string {
   return path.join(MODELS_DIR, `${size}-${kind}.onnx`);
 }
 
-export function modelsPresent(size = modelSize()): boolean {
+export function modelsPresent(): boolean {
   return (['detection', 'recognition'] as const).every(kind => {
-    try { return fs.statSync(modelPath(kind, size)).size > 0; } catch { return false; }
+    try { return fs.statSync(modelPath(kind)).size > 0; } catch { return false; }
   });
 }
 
@@ -121,18 +147,17 @@ async function fetchModel(url: string, dest: string, onProgress?: DownloadProgre
 
 /** Fetch whatever is missing. No-op once both models are on disk. */
 export async function ensureModels(onProgress?: DownloadProgress): Promise<void> {
-  const size = modelSize();
   fs.mkdirSync(MODELS_DIR, { recursive: true });
   const kinds = (['detection', 'recognition'] as const).filter(kind => {
-    try { return fs.statSync(modelPath(kind, size)).size === 0; } catch { return true; }
+    try { return fs.statSync(modelPath(kind)).size === 0; } catch { return true; }
   });
   if (!kinds.length) return;
 
   for (let i = 0; i < kinds.length; i++) {
     const kind = kinds[i]!;
-    const dest = modelPath(kind, size);
+    const dest = modelPath(kind);
     try {
-      await fetchModel(SOURCES[size][kind], dest, pct => {
+      await fetchModel(SOURCES[modelSize(kind)][kind], dest, pct => {
         // Spread each file's progress across its share of the whole download.
         onProgress?.(Math.round(((i + pct / 100) / kinds.length) * 100));
       });

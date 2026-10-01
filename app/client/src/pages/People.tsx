@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
   Users, ScanFace, Loader2, Pencil, Trash2, Merge, X, ChevronLeft, Square, CheckSquare,
-  RotateCcw, Film,
+  RotateCcw, Film, SlidersHorizontal, Wand2,
 } from 'lucide-react';
 import { Header } from '@/components/Header';
 import { Button } from '@/components/ui/button';
@@ -17,7 +17,7 @@ import { facesApi, faceThumbUrl } from '@/api/faces';
 import { favoritesApi } from '@/api/videos';
 import { usePlayerStore } from '@/stores/playerStore';
 import { cn } from '@/lib/utils';
-import type { Person, Video } from '@/types';
+import type { FaceIndexStatus, Person, Video } from '@/types';
 
 // ── People ────────────────────────────────────────────────────────────────────
 // Everyone the face scan has found, as a wall of faces. Tapping one shows every
@@ -51,6 +51,7 @@ function PeopleGrid() {
   const [removing, setRemoving] = useState<{ person: Person; label: string } | null>(null);
   const [confirmMerge, setConfirmMerge] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
+  const [showTuning, setShowTuning] = useState(false);
 
   const { data: status } = useQuery({
     queryKey: ['faces-status'],
@@ -102,6 +103,12 @@ function PeopleGrid() {
     mutationFn: (id: string) => facesApi.remove(id),
     onSuccess: () => { toast.success('Removed'); refresh(); },
     onError: () => toast.error('Could not remove them'),
+  });
+
+  const regroupMutation = useMutation({
+    mutationFn: (grouping?: { threshold?: number; minFaces?: number }) => facesApi.regroup(grouping),
+    onSuccess: () => { toast.success('Regrouping — this only takes a moment'); refresh(); },
+    onError: () => toast.error('Could not regroup'),
   });
 
   const resetMutation = useMutation({
@@ -167,9 +174,19 @@ function PeopleGrid() {
             onRescan={() => scanMutation.mutate(true)}
             onStop={() => stopMutation.mutate()}
             onReset={() => setConfirmReset(true)}
-            busy={scanMutation.isPending}
+            onRegroup={() => regroupMutation.mutate(undefined)}
+            onTune={() => setShowTuning(v => !v)}
+            busy={scanMutation.isPending || regroupMutation.isPending}
             hasIndex={people.length > 0 || (status?.indexed ?? 0) > 0}
           />
+
+          {showTuning && status && (
+            <GroupingPanel
+              status={status}
+              busy={regroupMutation.isPending}
+              onApply={grouping => regroupMutation.mutate(grouping)}
+            />
+          )}
 
           {picked.size > 0 && (
             <div className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border border-accent/30 bg-accent-light px-4 py-2.5">
@@ -285,18 +302,26 @@ function PeopleGrid() {
 
 // ── Scan controls ─────────────────────────────────────────────────────────────
 
-function ScanPanel({ running, unscanned, status, onScan, onRescan, onStop, onReset, busy, hasIndex }: {
+function ScanPanel({ running, unscanned, status, onScan, onRescan, onStop, onReset, onRegroup, onTune, busy, hasIndex }: {
   running: boolean;
   unscanned: number;
-  status: { done: number; total: number; current?: string; modelProgress?: number; error?: string; model: string } | undefined;
+  status: FaceIndexStatus | undefined;
   onScan: () => void;
   onRescan: () => void;
   onStop: () => void;
   onReset: () => void;
+  onRegroup: () => void;
+  onTune: () => void;
   busy: boolean;
   hasIndex: boolean;
 }) {
   const percent = status && status.total ? Math.round((status.done / status.total) * 100) : 0;
+  const phase = status?.phase;
+  const label = phase === 'models'
+    ? `Downloading the face models… ${status?.modelProgress ?? 0}%`
+    : phase === 'grouping'
+    ? 'Working out who is who…'
+    : `Scanning ${status?.done ?? 0} of ${status?.total ?? 0}${status?.current ? ` · ${status.current}` : ''}`;
 
   return (
     <div className="mb-5 rounded-xl border border-border bg-surface p-4">
@@ -304,21 +329,19 @@ function ScanPanel({ running, unscanned, status, onScan, onRescan, onStop, onRes
         <div className="space-y-2">
           <div className="flex items-center gap-2">
             <Loader2 className="h-4 w-4 shrink-0 animate-spin text-accent" />
-            <p className="flex-1 truncate text-sm font-medium text-text-primary">
-              {status?.modelProgress !== undefined
-                ? `Downloading the face models… ${status.modelProgress}%`
-                : `Scanning ${status?.done ?? 0} of ${status?.total ?? 0}${status?.current ? ` · ${status.current}` : ''}`}
-            </p>
-            <Button size="sm" variant="secondary" onClick={onStop}>Stop</Button>
+            <p className="flex-1 truncate text-sm font-medium text-text-primary">{label}</p>
+            {phase !== 'grouping' && <Button size="sm" variant="secondary" onClick={onStop}>Stop</Button>}
           </div>
           <div className="h-1.5 w-full overflow-hidden rounded-full bg-border">
             <div
               className="h-full rounded-full bg-accent transition-all"
-              style={{ width: `${status?.modelProgress ?? percent}%` }}
+              style={{ width: `${phase === 'models' ? (status?.modelProgress ?? 0) : percent}%` }}
             />
           </div>
           <p className="text-xs text-text-subtle">
-            This runs at low priority, so watching something stays smooth. You can leave this page.
+            {phase === 'grouping'
+              ? 'Comparing every face against every other one. This part is quick.'
+              : 'This runs at low priority, so watching something stays smooth. You can leave this page.'}
           </p>
         </div>
       ) : (
@@ -328,14 +351,28 @@ function ScanPanel({ running, unscanned, status, onScan, onRescan, onStop, onRes
             {unscanned > 0
               ? `${unscanned} ${unscanned === 1 ? 'video has' : 'videos have'} not been scanned for faces yet.`
               : 'Every video has been scanned. New downloads need another run.'}
+            {status && status.faces.total > 0 && (
+              <span className="ml-1 text-text-subtle">
+                {status.faces.grouped} of {status.faces.total} faces grouped.
+              </span>
+            )}
           </p>
           {status?.error && <p className="w-full text-xs text-danger">{status.error}</p>}
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Button size="sm" onClick={onScan} disabled={busy}>
               <ScanFace className="h-4 w-4" /> {unscanned > 0 ? `Scan ${unscanned}` : 'Scan for faces'}
             </Button>
             {hasIndex && (
               <>
+                <Button
+                  size="sm" variant="secondary" onClick={onRegroup} disabled={busy}
+                  title="Work out who is who again from the faces already found — no re-scanning"
+                >
+                  <Wand2 className="h-4 w-4" /> Regroup people
+                </Button>
+                <Button size="sm" variant="ghost" onClick={onTune} disabled={busy} title="How strictly faces are grouped">
+                  <SlidersHorizontal className="h-4 w-4" /> Sensitivity
+                </Button>
                 <Button size="sm" variant="secondary" onClick={onRescan} disabled={busy} title="Scan every video again">
                   <RotateCcw className="h-4 w-4" /> Rescan all
                 </Button>
@@ -347,6 +384,64 @@ function ScanPanel({ running, unscanned, status, onScan, onRescan, onStop, onRes
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// Grouping is a pure function of the stored face vectors, so these two settings
+// can be tried as often as you like — each apply is seconds of work, not a scan.
+function GroupingPanel({ status, busy, onApply }: {
+  status: FaceIndexStatus;
+  busy: boolean;
+  onApply: (grouping: { threshold: number; minFaces: number }) => void;
+}) {
+  const [threshold, setThreshold] = useState(status.grouping.threshold);
+  const [minFaces, setMinFaces] = useState(status.grouping.minFaces);
+  const changed = threshold !== status.grouping.threshold || minFaces !== status.grouping.minFaces;
+
+  return (
+    <div className="mb-5 space-y-4 rounded-xl border border-border bg-surface p-4">
+      <div>
+        <div className="flex items-baseline justify-between">
+          <label className="text-sm font-medium text-text-primary">How alike faces must be</label>
+          <span className="font-mono text-xs tabular-nums text-text-muted">{threshold.toFixed(2)}</span>
+        </div>
+        <input
+          type="range" min={0.2} max={0.6} step={0.01}
+          value={threshold}
+          onChange={e => setThreshold(Number(e.target.value))}
+          className="mt-2 w-full accent-accent"
+        />
+        <p className="mt-1 text-xs text-text-subtle">
+          Lower gathers more of one person together but risks folding two similar people into one.
+          Higher keeps people apart but may split someone across several tiles.
+        </p>
+      </div>
+
+      <div>
+        <div className="flex items-baseline justify-between">
+          <label className="text-sm font-medium text-text-primary">Faces needed to make a person</label>
+          <span className="font-mono text-xs tabular-nums text-text-muted">{minFaces}</span>
+        </div>
+        <input
+          type="range" min={1} max={6} step={1}
+          value={minFaces}
+          onChange={e => setMinFaces(Number(e.target.value))}
+          className="mt-2 w-full accent-accent"
+        />
+        <p className="mt-1 text-xs text-text-subtle">
+          Raise this to keep one-off blurry faces from becoming their own tile.
+        </p>
+      </div>
+
+      <div className="flex items-center gap-2">
+        <Button size="sm" onClick={() => onApply({ threshold, minFaces })} disabled={busy || !changed}>
+          <Wand2 className="h-4 w-4" /> Apply and regroup
+        </Button>
+        <p className="text-xs text-text-subtle">
+          Names and merges you made by hand are kept.
+        </p>
+      </div>
     </div>
   );
 }

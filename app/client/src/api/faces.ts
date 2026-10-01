@@ -1,5 +1,5 @@
 import api from './client';
-import type { Person, PersonInVideo, FaceIndexStatus, Video } from '../types';
+import type { Person, PersonInVideo, FaceIndexStatus, FaceGrouping, Video } from '../types';
 
 export const facesApi = {
   status: () => api.get<FaceIndexStatus>('/faces/status').then(r => r.data),
@@ -9,6 +9,10 @@ export const facesApi = {
     api.post<FaceIndexStatus>('/faces/scan', opts).then(r => r.data),
 
   stop: () => api.post('/faces/stop').then(r => r.data),
+
+  /** Re-derive people from embeddings already on disk — no re-scanning. */
+  regroup: (grouping?: Partial<FaceGrouping>) =>
+    api.post<FaceIndexStatus>('/faces/regroup', grouping ?? {}).then(r => r.data),
 
   reset: () => api.delete('/faces').then(r => r.data),
 
