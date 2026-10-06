@@ -5,7 +5,7 @@ import path from 'path';
 import fs from 'fs';
 import { execFile } from 'child_process';
 import {
-  loadConfig, loadSecrets, ensureDataDirs, migrateLegacyData,
+  loadConfig, loadSecrets, ensureDataDirs, migrateLegacyData, removeFaceData,
   APP_DIR, DATA_DIR, YT_DLP_LOCAL,
 } from './config';
 import { rescan, buildMeta, findById } from './services/library';
@@ -24,7 +24,6 @@ import appUpdateRouter from './routes/appUpdate';
 import previewRouter from './routes/preview';
 import favoritesRouter from './routes/favorites';
 import repairRouter from './routes/repair';
-import facesRouter from './routes/faces';
 import { initPreviews } from './services/preview';
 import { requireAuth } from './middleware/auth';
 import { migratePasswordEraConfig } from './services/users';
@@ -37,6 +36,7 @@ declare module 'express-session' {
 // Data lives outside the app tree; pull anything left behind by a pre-split
 // install across before the first read.
 const migrated = migrateLegacyData();
+const removedFaceData = removeFaceData();
 ensureDataDirs();
 const config = loadConfig();
 const secrets = loadSecrets();
@@ -139,7 +139,6 @@ app.use('/api', appUpdateRouter);
 app.use('/api', previewRouter);
 app.use('/api', favoritesRouter);
 app.use('/api', repairRouter);
-app.use('/api', facesRouter);
 
 // ── Serve React SPA ───────────────────────────────────────────────────────────
 
@@ -161,6 +160,7 @@ app.listen(PORT, () => {
   console.log(`Data dir : ${DATA_DIR}`);
   console.log(`Media dir: ${config.mediaDir}`);
   if (migrated.length) console.log(`Migrated into the data dir: ${migrated.join(', ')}`);
+  if (removedFaceData.length) console.log(`Removed face recognition data: ${removedFaceData.join(', ')}`);
   rescan();
   initPreviews(); // wipe any stale scrub-preview sprites + start the idle sweep
   // Defer CPU work so the server can answer requests immediately on boot instead

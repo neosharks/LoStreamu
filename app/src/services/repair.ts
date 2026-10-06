@@ -9,7 +9,6 @@ import {
   getLibrary, findById, rescan, buildMeta, purgeMetaEntry, makeVideoId, getMediaRoot,
 } from './library';
 import { rekeyFavorite, forgetFavorite } from './favorites';
-import { rekeyFaces, forgetFaces } from './faces/store';
 import type { RepairJob, RepairOptions, RepairPlan, RepairStatus, VideoItem } from '../types';
 
 // ── Repair ────────────────────────────────────────────────────────────────────
@@ -165,12 +164,11 @@ async function runJob(job: RepairJob, video: VideoItem): Promise<RepairStatus> {
     try { fs.utimesSync(target, stat.atime, stat.mtime); } catch { /* cosmetic */ }
 
     // The id is a hash of the path, so changing the extension mints a new one.
-    // Carry the stars and the face index across, and drop the stale thumbnail.
+    // Carry the stars across, and drop the stale thumbnail.
     const newRel = path.relative(getMediaRoot(), target).split(path.sep).join('/');
     const newId = makeVideoId(newRel);
     if (newId !== video.id) {
       rekeyFavorite(originalRel, newRel);
-      rekeyFaces(originalRel, newRel);
       purgeMetaEntry(video.id);
     } else {
       // Same path: the cached duration/codecs describe the old file.
@@ -216,7 +214,6 @@ function discardVideo(video: VideoItem): boolean {
   invalidateThumb(video.id);
   purgeMetaEntry(video.id);
   forgetFavorite(video.relPath);
-  forgetFaces(video.relPath);
   rescan();
   return true;
 }

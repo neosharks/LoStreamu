@@ -3,15 +3,13 @@ import {
   Play, Pause, SkipBack, SkipForward, ChevronLeft,
   Volume2, Volume1, VolumeX, Maximize, Minimize,
   PictureInPicture2, Loader2, Trash2, Repeat, Gauge,
-  Star, Wrench, AlertTriangle, Users,
+  Star, Wrench, AlertTriangle,
 } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { Button } from './ui/button';
 import { usePlayerStore } from '@/stores/playerStore';
 import { videosApi, previewApi, favoritesApi, repairApi, type PreviewMeta } from '@/api/videos';
-import { facesApi, faceThumbUrl } from '@/api/faces';
 import { formatDuration, cn } from '@/lib/utils';
 import type { VideoHealth } from '@/types';
 
@@ -46,7 +44,6 @@ function savePrefs(prefs: PlayerPrefs): void {
 export function Player() {
   const { video, playlist, close, next, prev, removeCurrent } = usePlayerStore();
   const qc = useQueryClient();
-  const navigate = useNavigate();
 
   const containerRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -95,15 +92,6 @@ export function Player() {
   const [favorite, setFavorite] = useState(false);
   // `previewMeta` (layout + frameBase) is kept as soon as the server reports it —
   // even mid-generation — so hovering shows each frame the instant it lands.
-  // Who the face scan found in this video. Clicking one opens their page.
-  const { data: peopleHere = [] } = useQuery({
-    queryKey: ['video-faces', video?.id],
-    queryFn: () => facesApi.inVideo(video!.id),
-    enabled: !!video,
-    staleTime: 5 * 60 * 1000,
-    retry: false,
-  });
-
   const [previewMeta, setPreviewMeta] = useState<PreviewMeta | null>(null);
   const [previewStatus, setPreviewStatus] = useState<'generating' | 'ready' | 'error'>('generating');
   const [previewProgress, setPreviewProgress] = useState(0);
@@ -757,25 +745,7 @@ export function Player() {
 
         <div className="min-w-0 flex-1">
           <p className="truncate text-base font-semibold text-white leading-tight">{video.name}</p>
-          <div className="flex items-center gap-2">
-            {video.folder && <p className="truncate text-xs text-white/50">{video.folder}</p>}
-            {/* Who the face scan found here — a shortcut to everything else they are in */}
-            {peopleHere.length > 0 && (
-              <div className="flex items-center gap-1">
-                <Users className="h-3 w-3 shrink-0 text-white/40" />
-                {peopleHere.slice(0, 5).map(person => (
-                  <button
-                    key={person.personId}
-                    onClick={() => { close(); navigate(`/people/${person.personId}`); }}
-                    title={person.name || 'See everything this person is in'}
-                    className="h-6 w-6 overflow-hidden rounded-full ring-1 ring-white/30 transition-transform hover:scale-110 hover:ring-accent"
-                  >
-                    <img src={faceThumbUrl(person.faceId)} alt={person.name} className="h-full w-full object-cover" />
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
+          {video.folder && <p className="truncate text-xs text-white/50">{video.folder}</p>}
         </div>
 
         <div className="flex items-center gap-2 shrink-0">

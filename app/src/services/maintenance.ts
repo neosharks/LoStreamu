@@ -5,7 +5,6 @@ import {
 } from './library';
 import { cleanThumbnails, generateThumb } from './media';
 import { pruneFavorites } from './favorites';
-import { pruneFaces } from './faces/store';
 
 // ── Junk cleanup ─────────────────────────────────────────────────────────────
 // "Junk" is anything on the server that isn't a real video and isn't needed:
@@ -32,9 +31,8 @@ export interface CleanupResult {
   tempFiles: { removedFiles: number; freedBytes: number };
   metaEntries: number;
   emptyFolders: number;
-  /** Stars and face-index entries pointing at videos that no longer exist. */
+  /** Stars pointing at videos that no longer exist. */
   staleFavorites: number;
-  staleFaceEntries: number;
 }
 
 export function cleanJunk(): CleanupResult {
@@ -66,11 +64,10 @@ export function cleanJunk(): CleanupResult {
   };
   walk(root);
 
-  // 3. Stale meta-cache entries, stars and face-index entries.
+  // 3. Stale meta-cache entries and stars.
   const metaEntries = pruneOrphanMeta(validIds);
   const validPaths = new Set(getLibrary().map(v => v.relPath));
   const staleFavorites = pruneFavorites(validPaths);
-  const staleFaceEntries = pruneFaces(validPaths);
 
   // 4. Every empty folder under the media root, deepest first.
   const emptyFolders = sweepEmptyDirs(root);
@@ -83,7 +80,6 @@ export function cleanJunk(): CleanupResult {
     metaEntries,
     emptyFolders,
     staleFavorites,
-    staleFaceEntries,
   };
 }
 

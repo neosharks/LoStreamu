@@ -6,7 +6,6 @@ import { Library } from './pages/Library';
 import { Login } from './pages/Login';
 import { Settings } from './pages/Settings';
 import { Downloads } from './pages/Downloads';
-import { People } from './pages/People';
 import { authApi } from './api/settings';
 
 // Gate protected routes on the session check so the dashboard never mounts
@@ -41,9 +40,6 @@ export default function App() {
       <Route path="/watch/:id/:slug" element={<RequireAuth><Library /></RequireAuth>} />
       <Route path="/login" element={<Login />} />
       <Route path="/downloads" element={<RequireAuth><Downloads /></RequireAuth>} />
-      {/* Faces: the wall of people, and one person's videos. */}
-      <Route path="/people" element={<RequireAuth><People /></RequireAuth>} />
-      <Route path="/people/:personId" element={<RequireAuth><People /></RequireAuth>} />
       <Route path="/settings" element={<RequireAuth><Settings /></RequireAuth>} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

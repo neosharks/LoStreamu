@@ -1,7 +1,8 @@
 /* Runnable auth tests — `npx tsx tests/auth.test.ts` (no framework).
    Covers the PIN-login rules that have no HTTP surface of their own: the PIN
    policy, the failed-attempt lockout curve, trusted-device matching, and the
-   legacy-layout migration that moves a pre-split install's data into DATA_DIR.
+   legacy-layout migration that moves a pre-split install's data into DATA_DIR,
+   and the boot cleanup that deletes what the removed face scanner left behind.
 
    SV_DATA_DIR is set before importing the app so the whole suite reads and
    writes a throwaway directory, never the developer's real data. */
@@ -134,6 +135,38 @@ async function test(name: string, fn: () => Promise<void> | void) {
       assert.ok(!fs.existsSync(path.join(legacyApp, 'media', 'films', 'old.mp4')), 'video no longer in the app tree');
       const migratedCfg = JSON.parse(fs.readFileSync(path.join(TMP, 'config.json'), 'utf8'));
       assert.equal(migratedCfg.mediaDir, path.join(TMP, 'media'), 'mediaDir repointed at the data dir');
+    } finally {
+      fs.rmSync(legacyApp, { recursive: true, force: true });
+    }
+  });
+
+  await test('removeFaceData: face index, crops and models go; everything else stays', () => {
+    // A throwaway app tree again — the real one may hold a developer's own
+    // face data, and this deletes it.
+    const legacyApp = fs.mkdtempSync(path.join(os.tmpdir(), 'sv-legacy-'));
+    for (const dir of [TMP, legacyApp]) {
+      fs.writeFileSync(path.join(dir, 'faces.json'), '{}');
+      fs.mkdirSync(path.join(dir, 'faces'), { recursive: true });
+      fs.writeFileSync(path.join(dir, 'faces', 'abcdef12.jpg'), 'x');
+      fs.mkdirSync(path.join(dir, 'models'), { recursive: true });
+      fs.writeFileSync(path.join(dir, 'models', 'large-recognition.onnx'), 'x');
+    }
+    fs.writeFileSync(path.join(TMP, 'favorites.json'), '{}');
+    // Same-named source directories must survive: only top-level entries go.
+    fs.mkdirSync(path.join(legacyApp, 'src', 'faces'), { recursive: true });
+
+    try {
+      const removed = config.removeFaceData([TMP, legacyApp]);
+      assert.equal(removed.length, 6, `expected 6 removals, got ${removed.join(',')}`);
+      for (const dir of [TMP, legacyApp]) {
+        for (const name of ['faces.json', 'faces', 'models']) {
+          assert.ok(!fs.existsSync(path.join(dir, name)), `${name} left in ${dir}`);
+        }
+      }
+      assert.ok(fs.existsSync(path.join(TMP, 'favorites.json')), 'unrelated data was deleted');
+      assert.ok(fs.existsSync(path.join(TMP, 'media', 'films', 'old.mp4')), 'media was deleted');
+      assert.ok(fs.existsSync(path.join(legacyApp, 'src', 'faces')), 'a nested faces/ was deleted');
+      assert.deepEqual(config.removeFaceData([TMP, legacyApp]), [], 'a second boot has nothing to remove');
     } finally {
       fs.rmSync(legacyApp, { recursive: true, force: true });
     }

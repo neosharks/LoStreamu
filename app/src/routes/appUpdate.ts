@@ -87,13 +87,9 @@ router.get('/app/update/stream', requireAuth, async (req, res) => {
         '--exclude=config.json', '--exclude=secrets.json',
         '--exclude=users.json', '--exclude=users.json.password-era.bak',
         '--exclude=meta-cache.json', '--exclude=download-queue.json',
-        '--exclude=/favorites.json', '--exclude=/faces.json',
+        '--exclude=/favorites.json',
         '--exclude=cookies.txt', '--exclude=yt-dlp', '--exclude=server.log',
         '--exclude=media/', '--exclude=thumbnails/', '--exclude=previews/',
-        // Leading slash anchors these to the app root: an unanchored `faces/`
-        // would also match src/services/faces and stop the scanner's own code
-        // ever being updated.
-        '--exclude=/faces/', '--exclude=/models/',
         `${stage}/`, `${APP_DIR}/`,
       ], '/', res);
       log(`✓ Synced`);

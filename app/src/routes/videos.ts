@@ -10,7 +10,6 @@ import {
 } from '../services/library';
 import { thumbPath, spritePath, vttPath, invalidateThumb } from '../services/media';
 import { listFavorites, rekeyFavorite, forgetFavorite } from '../services/favorites';
-import { rekeyFaces, forgetFaces } from '../services/faces/store';
 import { projectVideo } from '../services/videoView';
 
 const router = Router();
@@ -34,8 +33,8 @@ router.get('/videos', requireAuth, (req, res) => {
 });
 
 // Every relative path under `folder`, paired with where it lands when the folder
-// is renamed or moved to `destFolder` — what favourites and the face index need
-// to follow the files.
+// is renamed or moved to `destFolder` — what favourites need to follow the
+// files.
 function pathsUnder(folder: string, destFolder: string): Array<[string, string]> {
   const prefix = folder + '/';
   return getLibrary()
@@ -71,10 +70,9 @@ router.patch('/videos/:id', requireAuth, (req, res) => {
   const newAbs = path.join(path.dirname(v.absPath), name + v.ext);
   if (fs.existsSync(newAbs)) { res.status(409).json({ error: 'Name already exists.' }); return; }
   fs.renameSync(v.absPath, newAbs);
-  // Stars and faces are keyed by path, so they have to follow the rename.
+  // Stars are keyed by path, so they have to follow the rename.
   const newRel = path.relative(getMediaRoot(), newAbs).split(path.sep).join('/');
   rekeyFavorite(v.relPath, newRel);
-  rekeyFaces(v.relPath, newRel);
   rescan();
   res.json({ ok: true });
 });
@@ -98,7 +96,6 @@ router.delete('/videos', requireAuth, (req, res) => {
     invalidateThumb(id);
     purgeMetaEntry(id);
     forgetFavorite(v.relPath);
-    forgetFaces(v.relPath);
   }
   rescan();
   res.json({ ok: true, deleted, missing, failed });
@@ -131,7 +128,6 @@ router.post('/videos/move', requireAuth, (req, res) => {
       fs.renameSync(v.absPath, target);
       const newRel = path.relative(getMediaRoot(), target).split(path.sep).join('/');
       rekeyFavorite(v.relPath, newRel);
-      rekeyFaces(v.relPath, newRel);
       moved++;
     } catch { failed.push(v.name + v.ext); }
   }
@@ -167,7 +163,7 @@ router.patch('/folders', requireAuth, (req, res) => {
   const cut = folder.lastIndexOf('/');
   const moves = pathsUnder(folder, cut === -1 ? name : folder.slice(0, cut + 1) + name);
   fs.renameSync(abs, newAbs);
-  for (const [from, to] of moves) { rekeyFavorite(from, to); rekeyFaces(from, to); }
+  for (const [from, to] of moves) rekeyFavorite(from, to);
   rescan();
   res.json({ ok: true });
 });
@@ -183,7 +179,6 @@ router.delete('/folders', requireAuth, (req, res) => {
     }
     purgeMetaEntry(v.id);
     forgetFavorite(v.relPath);
-    forgetFaces(v.relPath);
   }
   fs.rmSync(abs, { recursive: true, force: true });
   rescan();
@@ -204,7 +199,7 @@ router.post('/folders/move', requireAuth, (req, res) => {
   const base = path.basename(abs);
   const moves = pathsUnder(folder, dest ? `${dest}/${base}` : base);
   fs.renameSync(abs, newAbs);
-  for (const [from, to] of moves) { rekeyFavorite(from, to); rekeyFaces(from, to); }
+  for (const [from, to] of moves) rekeyFavorite(from, to);
   rescan();
   res.json({ ok: true });
 });

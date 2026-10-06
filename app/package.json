@@ -8,7 +8,7 @@
     "build:client": "npm run build --prefix client",
     "build": "npm run build:server && npm run build:client",
     "start": "node dist/index.js",
-    "test": "tsx tests/queue.test.ts && tsx tests/ytdlp-filter.test.ts && tsx tests/maintenance.test.ts && tsx tests/preview.test.ts && tsx tests/verify.test.ts && tsx tests/health.test.ts && tsx tests/favorites.test.ts && tsx tests/faces.test.ts && tsx tests/range.test.ts && tsx tests/auth.test.ts && tsx tests/library.test.ts && tsx tests/drag.test.ts"
+    "test": "tsx tests/queue.test.ts && tsx tests/ytdlp-filter.test.ts && tsx tests/maintenance.test.ts && tsx tests/preview.test.ts && tsx tests/verify.test.ts && tsx tests/health.test.ts && tsx tests/favorites.test.ts && tsx tests/range.test.ts && tsx tests/auth.test.ts && tsx tests/library.test.ts && tsx tests/drag.test.ts"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
@@ -27,8 +27,5 @@
     "concurrently": "^9.0.0",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0"
-  },
-  "optionalDependencies": {
-    "onnxruntime-node": "^1.30.0"
   }
 }

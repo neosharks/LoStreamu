@@ -1,7 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
 import { useQuery, useMutation } from '@tanstack/react-query';
-import { Folder, FolderOpen, ChevronRight, Film, Plus, Pencil, Trash2, Move, X, MoreVertical, LogOut, Loader2, CornerDownRight, Star, Users } from 'lucide-react';
+import { Folder, FolderOpen, ChevronRight, Film, Plus, Pencil, Trash2, Move, X, MoreVertical, LogOut, Loader2, CornerDownRight, Star } from 'lucide-react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { videosApi, favoritesApi } from '@/api/videos';
 import { authApi } from '@/api/settings';
@@ -240,21 +239,18 @@ function TreeNode({ node, depth, selected, onSelect, onCreateFolder, onRenameFol
   );
 }
 
-// Favourites and People sit above the folder tree: both are ways into the same
-// library that have nothing to do with where a file happens to live on disk.
+// Favourites sit above the folder tree: a way into the same library that has
+// nothing to do with where a file happens to live on disk.
 function SavedViews({ view, onSelectView, onMobileClose }: {
   view: 'library' | 'favorites';
   onSelectView?: (view: 'library' | 'favorites') => void;
   onMobileClose?: () => void;
 }) {
-  const navigate = useNavigate();
-  const location = useLocation();
   const { data: favorites } = useQuery({
     queryKey: ['favorites'],
     queryFn: favoritesApi.list,
     staleTime: 30_000,
   });
-  const onPeoplePage = location.pathname.startsWith('/people');
 
   const row = (active: boolean) => cn(
     'flex w-full items-center gap-2 rounded-lg py-1.5 pl-3 pr-2 text-left text-sm transition-colors',
@@ -267,23 +263,16 @@ function SavedViews({ view, onSelectView, onMobileClose }: {
     <div className="mb-2 space-y-0.5">
       <button
         onClick={() => { onSelectView?.('favorites'); onMobileClose?.(); }}
-        className={row(view === 'favorites' && !onPeoplePage)}
+        className={row(view === 'favorites')}
       >
         <Star
-          className={cn('h-3.5 w-3.5 shrink-0', view === 'favorites' && !onPeoplePage ? 'text-accent' : 'text-warning')}
-          fill={view === 'favorites' && !onPeoplePage ? 'currentColor' : 'none'}
+          className={cn('h-3.5 w-3.5 shrink-0', view === 'favorites' ? 'text-accent' : 'text-warning')}
+          fill={view === 'favorites' ? 'currentColor' : 'none'}
         />
         <span className="flex-1 truncate">Favourites</span>
         {favorites && favorites.length > 0 && (
           <span className="shrink-0 text-xs text-text-subtle">{favorites.length}</span>
         )}
-      </button>
-      <button
-        onClick={() => { navigate('/people'); onMobileClose?.(); }}
-        className={row(onPeoplePage)}
-      >
-        <Users className="h-3.5 w-3.5 shrink-0" />
-        <span className="flex-1 truncate">People</span>
       </button>
     </div>
   );
