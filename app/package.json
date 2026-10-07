@@ -1,6 +1,6 @@
 {
   "name": "streamvault",
-  "version": "2.7.0",
+  "version": "2.8.0",
   "description": "Self-hosted, auth-gated video streaming server",
   "scripts": {
     "dev": "concurrently \"tsx watch src/index.ts\" \"npm run dev --prefix client\"",
