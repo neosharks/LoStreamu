@@ -2,7 +2,7 @@ import { execFile, spawn, spawnSync } from 'child_process';
 import { promisify } from 'util';
 import fs from 'fs';
 import path from 'path';
-import { getProxy, COOKIES_PATH, YT_DLP_LOCAL } from '../config';
+import { getProxy, COOKIES_PATH, YT_DLP_LOCAL, DENO_LOCAL } from '../config';
 import { fetchCookiesViaBrowser } from './browserCookies';
 import type { PlaylistProbeResult, PlaylistEntry, YtDlpVersionInfo } from '../types';
 
@@ -67,10 +67,14 @@ export function ytNetArgs(): string[] {
   // on sites that fingerprint the TLS handshake (requires curl-cffi on server).
   if (caps.impersonate) args.push('--impersonate', 'chrome');
   // YouTube needs a JS runtime to solve its player challenges; without one,
-  // formats go missing or extraction fails. yt-dlp only looks for deno by
-  // default, so also offer the Node running this app when it is new enough.
-  if (caps.jsRuntimes && Number(process.versions.node.split('.')[0]) >= MIN_NODE_FOR_YTDLP) {
-    args.push('--js-runtimes', `node:${process.execPath}`);
+  // formats go missing or extraction fails. yt-dlp only finds deno on PATH by
+  // default, so also offer the updater's own deno and, when new enough, the
+  // Node running this app.
+  if (caps.jsRuntimes) {
+    if (fs.existsSync(DENO_LOCAL)) args.push('--js-runtimes', `deno:${DENO_LOCAL}`);
+    if (Number(process.versions.node.split('.')[0]) >= MIN_NODE_FOR_YTDLP) {
+      args.push('--js-runtimes', `node:${process.execPath}`);
+    }
   }
   args.push(
     '--add-header', 'Accept-Language:en-US,en;q=0.9',

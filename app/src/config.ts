@@ -42,6 +42,9 @@ export const FAVORITES_PATH = path.join(DATA_DIR, 'favorites.json');
 export const THUMB_DIR = path.join(DATA_DIR, 'thumbnails');
 export const PREVIEW_DIR = path.join(DATA_DIR, 'previews');
 export const YT_DLP_LOCAL = path.join(DATA_DIR, 'yt-dlp');
+// deno installed by the in-app updater, which cannot write system paths.
+export const DENO_DIR = path.join(DATA_DIR, 'deno');
+export const DENO_LOCAL = path.join(DENO_DIR, 'bin', 'deno');
 
 const DEFAULTS: AppConfig = {
   port: 8080,

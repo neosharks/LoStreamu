@@ -17,6 +17,7 @@ app/*.mp4
 app/server.log
 app/cookies.txt
 app/yt-dlp
+app/deno/
 app/media/*
 !app/media/.gitkeep
 app/thumbnails/*.jpg

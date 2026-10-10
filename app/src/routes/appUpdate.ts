@@ -4,7 +4,7 @@ import path from 'path';
 import fs from 'fs';
 import type { Response } from 'express';
 import { requireAuth } from '../middleware/auth';
-import { APP_DIR, DATA_DIR, getConfig } from '../config';
+import { APP_DIR, DATA_DIR, DENO_DIR, DENO_LOCAL, getConfig } from '../config';
 
 const router = Router();
 
@@ -90,6 +90,7 @@ router.get('/app/update/stream', requireAuth, async (req, res) => {
         '--exclude=/favorites.json',
         '--exclude=cookies.txt', '--exclude=yt-dlp', '--exclude=server.log',
         '--exclude=media/', '--exclude=thumbnails/', '--exclude=previews/',
+        '--exclude=/deno/',
         `${stage}/`, `${APP_DIR}/`,
       ], '/', res);
       log(`✓ Synced`);
@@ -129,6 +130,19 @@ router.get('/app/update/stream', requireAuth, async (req, res) => {
       } catch {
         log(`  (skipped — curl-cffi install failed, --impersonate may not work)`);
       }
+    }
+
+    // YouTube downloads need a JS runtime. Without root the system deno that
+    // install-lxc.sh sets up may be missing, so install a private copy.
+    log(`► Ensuring deno is available (yt-dlp YouTube JS runtime)...`);
+    try {
+      await runStep('sh', ['-c',
+        `command -v deno || [ -x "${DENO_LOCAL}" ] || ` +
+        `curl -fsSL https://deno.land/install.sh | DENO_INSTALL="${DENO_DIR}" sh -s -- -y --no-modify-path`,
+      ], '/', res);
+      log(`✓ deno ready`);
+    } catch {
+      log(`  (skipped — deno install failed, some YouTube downloads may fail)`);
     }
 
     log(`► Installing server dependencies...`);
