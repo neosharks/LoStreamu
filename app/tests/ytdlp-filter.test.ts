@@ -2,7 +2,9 @@
    Covers the duration filter's YouTube exemption: YouTube URLs of any length
    are allowed (no --match-filter), everything else keeps the 10-min minimum. */
 import assert from 'assert';
-import { isYouTubeUrl, ytFilterArgs, ytFormatArgs, MIN_DURATION_SEC } from '../src/services/ytdlp';
+import {
+  isYouTubeUrl, ytFilterArgs, ytFormatArgs, MIN_DURATION_SEC, hasChromeImpersonation, supportsJsRuntimes,
+} from '../src/services/ytdlp';
 
 let passed = 0;
 async function test(name: string, fn: () => Promise<void> | void) {
@@ -64,6 +66,23 @@ const NON_YT = [
     assert.equal(flag('--remux-video'), 'mp4');
     // moov atom up front so progressive playback starts at byte 0.
     assert.ok(flag('--postprocessor-args').includes('+faststart'), 'faststart applied');
+  });
+
+  await test('hasChromeImpersonation: true only when a Chrome target is usable', () => {
+    const header = '[info] Available impersonate targets\nClient          OS           Source\n--------------------------------------\n';
+    assert.equal(hasChromeImpersonation(header + 'Chrome-136      Macos-15     curl_cffi\nSafari-18.0     Ios-18.0     curl_cffi\n'), true);
+    // curl-cffi missing / unsupported version: yt-dlp still lists targets, marked unavailable.
+    assert.equal(hasChromeImpersonation(header + 'Chrome         -            curl_cffi (unavailable)\nSafari         -            curl_cffi (unavailable)\n'), false);
+    assert.equal(hasChromeImpersonation(header + 'Safari-18.0     Ios-18.0     curl_cffi\n'), false);
+    assert.equal(hasChromeImpersonation(''), false);
+  });
+
+  await test('supportsJsRuntimes: only yt-dlp releases that know --js-runtimes', () => {
+    assert.equal(supportsJsRuntimes('2026.08.19'), true);
+    assert.equal(supportsJsRuntimes('2025.11.12'), true);
+    assert.equal(supportsJsRuntimes('2025.11.12.233212'), true); // nightly build suffix
+    assert.equal(supportsJsRuntimes('2025.10.22'), false);
+    assert.equal(supportsJsRuntimes(''), false);
   });
 
   console.log(`\n${passed} passed`);

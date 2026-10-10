@@ -152,6 +152,17 @@ else
   ok "yt-dlp updated: ${YTDLP_OLD:-none} → $YTDLP_NEW"
 fi
 
+# YouTube needs a JavaScript runtime to solve its player challenges; deno is
+# the one yt-dlp uses by default.
+step "Installing/updating deno (yt-dlp YouTube JS runtime)..."
+curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh -s -- -y --no-modify-path 2>&1 || true
+hash -r 2>/dev/null || true
+if command -v deno >/dev/null 2>&1; then
+  ok "deno installed: $(deno --version | head -1)"
+else
+  info "deno install failed — YouTube downloads may miss formats or fail"
+fi
+
 # ── Version table ─────────────────────────────────────────────────────────────
 
 echo

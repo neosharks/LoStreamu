@@ -116,7 +116,8 @@ export class YtDlpEngine implements DownloadEngine {
       child.stderr?.on('data', (chunk: Buffer) => {
         const text = chunk.toString();
         if (isFilteredOut(text)) filtered = true;
-        if (/ERROR|error/.test(text)) lastError = netHint(text.trim().split('\n')[0]);
+        const errLine = text.split('\n').map(l => l.trim()).filter(l => /ERROR|error/.test(l)).pop();
+        if (errLine) lastError = netHint(errLine);
       });
       child.on('error', err => resolve({ status: 'failed', error: err.message }));
       child.on('close', async code => {

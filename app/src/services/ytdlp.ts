@@ -1,4 +1,4 @@
-import { execFile, spawn } from 'child_process';
+import { execFile, spawn, spawnSync } from 'child_process';
 import { promisify } from 'util';
 import fs from 'fs';
 import path from 'path';
@@ -17,15 +17,62 @@ export function normalizeUrl(url: string): string {
 }
 
 
+// First yt-dlp release with --js-runtimes (YouTube's EJS challenge solver).
+const JS_RUNTIMES_SINCE = '2025.11.12';
+// Oldest Node yt-dlp accepts as a JS runtime.
+const MIN_NODE_FOR_YTDLP = 22;
+
+// True if `--list-impersonate-targets` output has a usable Chrome target.
+// yt-dlp still lists targets whose backend is missing, suffixed "(unavailable)".
+export function hasChromeImpersonation(listing: string): boolean {
+  return listing.split('\n').some(l => /^chrome\b/i.test(l.trim()) && !/unavailable/i.test(l));
+}
+
+// True if this yt-dlp version understands --js-runtimes. Versions are dated
+// (YYYY.MM.DD[.build]), so string order is chronological.
+export function supportsJsRuntimes(version: string): boolean {
+  const m = version.match(/\d{4}\.\d{2}\.\d{2}/);
+  return !!m && m[0] >= JS_RUNTIMES_SINCE;
+}
+
+interface YtDlpCaps { bin: string; impersonate: boolean; jsRuntimes: boolean }
+let _caps: YtDlpCaps | null = null;
+
+// What the installed yt-dlp can use on this host. Passing a flag it can't honour
+// is fatal: `--impersonate chrome` without a compatible curl-cffi aborts every
+// run, and an unknown option fails argument parsing. Probed once per binary.
+function ytDlpCaps(): YtDlpCaps {
+  const bin = ytDlpBin();
+  if (_caps?.bin === bin) return _caps;
+  const r = spawnSync(bin, ['-v', '--list-impersonate-targets'], { encoding: 'utf8', timeout: 30000 });
+  const version = (r.stderr || '').match(/yt-dlp version \S*?(\d{4}\.\d{2}\.\d{2}\S*)/)?.[1] || '';
+  _caps = {
+    bin,
+    impersonate: hasChromeImpersonation(r.stdout || ''),
+    jsRuntimes: supportsJsRuntimes(version),
+  };
+  if (!_caps.impersonate) {
+    console.warn('[ytdlp] Chrome impersonation unavailable (curl-cffi missing or unsupported) — downloading without it');
+  }
+  return _caps;
+}
+
 export function ytNetArgs(): string[] {
+  const caps = ytDlpCaps();
   const args: string[] = [];
   if (fs.existsSync(COOKIES_PATH)) args.push('--cookies', COOKIES_PATH);
   const proxy = getProxy();
   if (proxy) args.push('--proxy', proxy);
+  // Impersonate Chrome at the TLS + HTTP level — fixes connection-reset-by-peer
+  // on sites that fingerprint the TLS handshake (requires curl-cffi on server).
+  if (caps.impersonate) args.push('--impersonate', 'chrome');
+  // YouTube needs a JS runtime to solve its player challenges; without one,
+  // formats go missing or extraction fails. yt-dlp only looks for deno by
+  // default, so also offer the Node running this app when it is new enough.
+  if (caps.jsRuntimes && Number(process.versions.node.split('.')[0]) >= MIN_NODE_FOR_YTDLP) {
+    args.push('--js-runtimes', `node:${process.execPath}`);
+  }
   args.push(
-    // Impersonate Chrome at the TLS + HTTP level — fixes connection-reset-by-peer
-    // on sites that fingerprint the TLS handshake (requires curl-cffi on server).
-    '--impersonate', 'chrome',
     '--add-header', 'Accept-Language:en-US,en;q=0.9',
     '--force-ipv4',
     '--geo-bypass',
@@ -222,6 +269,7 @@ export async function updateYtDlp(): Promise<void> {
     fs.chmodSync(YT_DLP_LOCAL, 0o755);
     try { fs.copyFileSync(YT_DLP_LOCAL, '/usr/local/bin/yt-dlp'); } catch {}
     _latestCache = { tag: null, at: 0 };
+    _caps = null;
   } catch (err) {
     try { fs.rmSync(tmp, { force: true }); } catch {}
     throw err;
