@@ -3,7 +3,7 @@ import {
   Play, Pause, SkipBack, SkipForward, ChevronLeft,
   Volume2, Volume1, VolumeX, Maximize, Minimize,
   PictureInPicture2, Loader2, Trash2, Repeat, Gauge,
-  Star, Wrench, AlertTriangle,
+  Star, Wrench, AlertTriangle, RotateCcw, RotateCw,
 } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -15,6 +15,7 @@ import type { VideoHealth } from '@/types';
 
 const SEEK_STEP = 10;
 const CONTROLS_TIMEOUT = 3000;
+const DOUBLE_TAP_MS = 300;
 const WHEEL_STEP = 0.05;
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2] as const;
 
@@ -110,6 +111,12 @@ export function Player() {
       const v = videoRef.current;
       if (v && !v.paused && !seekingRef.current) setControlsVisible(false);
     }, CONTROLS_TIMEOUT);
+  }, []);
+
+  const hideControls = useCallback(() => {
+    clearTimeout(hideTimer.current);
+    setControlsVisible(false);
+    setShowSpeeds(false);
   }, []);
 
   // ── Body scroll lock ──────────────────────────────────────────────────────────
@@ -579,6 +586,10 @@ export function Player() {
   // ── Touch: swipe-down to close + double-tap to seek ───────────────────────────
   const touchStart = useRef<{ x: number; y: number } | null>(null);
   const lastTap = useRef<{ side: 'left' | 'right' | 'center'; time: number } | null>(null);
+  // A single tap toggles the controls, but only once it is clear the tap is not
+  // the first half of a double-tap seek.
+  const tapTimer = useRef<ReturnType<typeof setTimeout>>();
+  useEffect(() => () => clearTimeout(tapTimer.current), []);
 
   const onTouchStart = (e: React.TouchEvent) => {
     touchStart.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
@@ -602,16 +613,26 @@ export function Player() {
       const side: 'left' | 'right' | 'center' = x < 0.33 ? 'left' : x > 0.67 ? 'right' : 'center';
       const now = Date.now();
 
-      if (lastTap.current && now - lastTap.current.time < 300 && lastTap.current.side === side) {
+      // Taps on a control belong to that control, not to the video area.
+      const onControl = !!(e.target as HTMLElement).closest('button, [role="slider"]');
+
+      if (lastTap.current && now - lastTap.current.time < DOUBLE_TAP_MS && lastTap.current.side === side) {
         // Double tap: seek on the sides only. Center is intentionally inert —
         // on mobile, playback toggles ONLY via the on-screen control buttons,
         // never by tapping the video area.
+        clearTimeout(tapTimer.current);
         if (side === 'left') seekBy(-SEEK_STEP);
         else if (side === 'right') seekBy(SEEK_STEP);
         lastTap.current = null;
-      } else {
-        lastTap.current = { side, time: now };
+      } else if (onControl) {
+        lastTap.current = null;
         revealControls();
+      } else {
+        // Tap on empty space: show the controls, or hide them if already shown.
+        lastTap.current = { side, time: now };
+        const wasVisible = controlsVisible;
+        clearTimeout(tapTimer.current);
+        tapTimer.current = setTimeout(() => (wasVisible ? hideControls() : revealControls()), DOUBLE_TAP_MS);
       }
     }
   };
@@ -683,9 +704,9 @@ export function Player() {
       )}
 
       {/* Center play button — shown when paused (incl. blocked autoplay). This is
-          the ONLY way tapping the middle of the screen starts playback, which is
-          what keeps mobile taps from pausing mid-watch. */}
-      {paused && !buffering && (
+          the ONLY way clicking the middle of the screen starts playback. Touch
+          devices get the full centre cluster below instead. */}
+      {!isTouchRef.current && paused && !buffering && (
         <button
           onClick={togglePlay}
           className="absolute left-1/2 top-1/2 flex h-20 w-20 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-black/50 text-white backdrop-blur-sm transition-transform active:scale-90"
@@ -693,6 +714,57 @@ export function Player() {
         >
           <Play className="h-10 w-10 translate-x-0.5" fill="currentColor" />
         </button>
+      )}
+
+      {/* Touch centre controls — rewind / play-pause / forward, fading with the
+          rest of the controls. The middle slot stays empty while buffering so
+          the spinner shows through. */}
+      {isTouchRef.current && !playbackError && (
+        <div
+          className={cn(
+            'pointer-events-none absolute inset-0 z-10 flex items-center justify-center gap-12 transition-opacity duration-300',
+            controlsVisible ? 'opacity-100' : 'opacity-0',
+          )}
+        >
+          <button
+            onClick={() => seekBy(-SEEK_STEP)}
+            className={cn(
+              'relative flex h-14 w-14 items-center justify-center rounded-full bg-black/40 text-white backdrop-blur-sm transition-transform active:scale-90',
+              controlsVisible ? 'pointer-events-auto' : 'pointer-events-none',
+            )}
+            aria-label={`Rewind ${SEEK_STEP} seconds`}
+          >
+            <RotateCcw className="h-9 w-9" strokeWidth={1.5} />
+            <span className="absolute pt-0.5 text-[10px] font-bold">{SEEK_STEP}</span>
+          </button>
+          {buffering ? (
+            <div className="h-20 w-20" />
+          ) : (
+            <button
+              onClick={togglePlay}
+              className={cn(
+                'flex h-20 w-20 items-center justify-center rounded-full bg-black/50 text-white backdrop-blur-sm transition-transform active:scale-90',
+                controlsVisible ? 'pointer-events-auto' : 'pointer-events-none',
+              )}
+              aria-label={paused ? 'Play' : 'Pause'}
+            >
+              {paused
+                ? <Play className="h-10 w-10 translate-x-0.5" fill="currentColor" />
+                : <Pause className="h-10 w-10" fill="currentColor" />}
+            </button>
+          )}
+          <button
+            onClick={() => seekBy(SEEK_STEP)}
+            className={cn(
+              'relative flex h-14 w-14 items-center justify-center rounded-full bg-black/40 text-white backdrop-blur-sm transition-transform active:scale-90',
+              controlsVisible ? 'pointer-events-auto' : 'pointer-events-none',
+            )}
+            aria-label={`Forward ${SEEK_STEP} seconds`}
+          >
+            <RotateCw className="h-9 w-9" strokeWidth={1.5} />
+            <span className="absolute pt-0.5 text-[10px] font-bold">{SEEK_STEP}</span>
+          </button>
+        </div>
       )}
 
       {/* Center seek flash */}
@@ -934,34 +1006,39 @@ export function Player() {
 
         {/* Controls row */}
         <div className="flex items-center gap-2">
-          {/* Seek back */}
-          <button
-            onClick={() => seekBy(-SEEK_STEP)}
-            className="flex h-11 w-11 items-center justify-center rounded-full text-white hover:bg-white/10 active:scale-90 transition-all"
-            title={`Rewind ${SEEK_STEP}s  (J / ←)`}
-          >
-            <SkipBack className="h-7 w-7" />
-          </button>
+          {/* Touch devices use the centre cluster instead */}
+          {!isTouchRef.current && (
+            <>
+              {/* Seek back */}
+              <button
+                onClick={() => seekBy(-SEEK_STEP)}
+                className="flex h-11 w-11 items-center justify-center rounded-full text-white hover:bg-white/10 active:scale-90 transition-all"
+                title={`Rewind ${SEEK_STEP}s  (J / ←)`}
+              >
+                <SkipBack className="h-7 w-7" />
+              </button>
 
-          {/* Play / Pause hero button */}
-          <button
-            onClick={togglePlay}
-            className="flex h-16 w-16 items-center justify-center rounded-full bg-white text-black hover:bg-white/90 active:scale-90 transition-all shadow-2xl"
-            title="Play / Pause  (Space / K)"
-          >
-            {paused
-              ? <Play className="h-8 w-8 translate-x-0.5" fill="currentColor" />
-              : <Pause className="h-8 w-8" fill="currentColor" />}
-          </button>
+              {/* Play / Pause hero button */}
+              <button
+                onClick={togglePlay}
+                className="flex h-16 w-16 items-center justify-center rounded-full bg-white text-black hover:bg-white/90 active:scale-90 transition-all shadow-2xl"
+                title="Play / Pause  (Space / K)"
+              >
+                {paused
+                  ? <Play className="h-8 w-8 translate-x-0.5" fill="currentColor" />
+                  : <Pause className="h-8 w-8" fill="currentColor" />}
+              </button>
 
-          {/* Seek forward */}
-          <button
-            onClick={() => seekBy(SEEK_STEP)}
-            className="flex h-11 w-11 items-center justify-center rounded-full text-white hover:bg-white/10 active:scale-90 transition-all"
-            title={`Forward ${SEEK_STEP}s  (L / →)`}
-          >
-            <SkipForward className="h-7 w-7" />
-          </button>
+              {/* Seek forward */}
+              <button
+                onClick={() => seekBy(SEEK_STEP)}
+                className="flex h-11 w-11 items-center justify-center rounded-full text-white hover:bg-white/10 active:scale-90 transition-all"
+                title={`Forward ${SEEK_STEP}s  (L / →)`}
+              >
+                <SkipForward className="h-7 w-7" />
+              </button>
+            </>
+          )}
 
           {/* Time */}
           <span className="ml-1 shrink-0 text-sm font-mono tabular-nums text-white/80">
@@ -1087,7 +1164,7 @@ export function Player() {
 
         {/* Mobile touch hint — shown briefly then fades */}
         <p className="block sm:hidden text-center text-[10px] text-white/20 -mt-1">
-          Double-tap left/right to seek · Swipe down to close
+          Tap to show/hide controls · Double-tap left/right to seek · Swipe down to close
         </p>
       </div>
     </div>
