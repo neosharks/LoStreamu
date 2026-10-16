@@ -1,5 +1,5 @@
 import api from './client';
-import type { DownloadJob, BatchJob, PlaylistProbe } from '../types';
+import type { DownloadJob, BatchJob } from '../types';
 
 export const downloadsApi = {
   list: () => api.get<DownloadJob[]>('/downloads').then(r => r.data),
@@ -24,8 +24,9 @@ export const downloadsApi = {
   bulk: (action: 'pause' | 'resume' | 'cancel' | 'retry' | 'remove', ids: string[]) =>
     api.post('/downloads/bulk', { action, ids }).then(r => r.data),
 
-  probePlaylist: (url: string) =>
-    api.post<PlaylistProbe>('/playlist/probe', { url }).then(r => r.data),
+  // SSE stream of a playlist's entries, read with usePlaylistProbe.
+  playlistProbeUrl: (url: string) =>
+    `${api.defaults.baseURL}/playlist/probe/stream?url=${encodeURIComponent(url)}`,
 
   // Bulk-enqueues playlist entries into the central queue; returns one job per entry.
   startBatch: (payload: {
@@ -34,7 +35,7 @@ export const downloadsApi = {
     title: string;
     concurrency?: number;
     items: { index: number; title: string; url?: string; thumbnail?: string }[];
-  }) => api.post<{ jobs: { id: string; url: string; folder: string }[]; duplicates: number }>(
+  }) => api.post<{ jobs: { id: string; url: string; folder: string; title: string }[]; duplicates: number }>(
     '/playlist/download', payload,
   ).then(r => r.data),
 

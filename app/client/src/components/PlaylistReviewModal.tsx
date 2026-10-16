@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
-import { useQuery, useMutation } from '@tanstack/react-query';
+import { useMutation } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { Loader2, Check, ListVideo } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogBody } from './ui/dialog';
 import { downloadsApi } from '@/api/downloads';
+import { usePlaylistProbe } from '@/hooks/usePlaylistProbe';
 import { formatDuration, cn } from '@/lib/utils';
 
 interface Props {
@@ -19,25 +20,18 @@ interface Props {
 export function PlaylistReviewModal({ open, url, folder, onClose, onAdded }: Props) {
   const [selected, setSelected] = useState<Set<number>>(new Set());
 
-  const probeQuery = useQuery({
-    queryKey: ['playlist-probe', url],
-    queryFn: () => downloadsApi.probePlaylist(url),
-    enabled: open && !!url,
-    staleTime: 5 * 60_000,
-  });
-  const probe = probeQuery.data;
+  // Everything is selected by default, including entries that arrive later.
+  const probe = usePlaylistProbe(open && url ? url : null, entries =>
+    setSelected(prev => new Set([...prev, ...entries.map(e => e.index)])));
 
-  // Select everything by default once the entries load.
-  useEffect(() => {
-    if (probe) setSelected(new Set(probe.entries.map(e => e.index)));
-  }, [probe]);
+  useEffect(() => { setSelected(new Set()); }, [open, url]);
 
   const addMutation = useMutation({
     mutationFn: () => {
-      const items = (probe?.entries ?? [])
+      const items = probe.entries
         .filter(e => selected.has(e.index))
         .map(e => ({ index: e.index, title: e.title, url: e.url, thumbnail: e.thumbnail }));
-      return downloadsApi.startBatch({ url, folder, title: probe?.title || 'Playlist', items });
+      return downloadsApi.startBatch({ url, folder, title: probe.title || 'Playlist', items });
     },
     onSuccess: (data) => {
       const added = data.jobs.length;
@@ -49,7 +43,7 @@ export function PlaylistReviewModal({ open, url, folder, onClose, onAdded }: Pro
     onError: (e: any) => toast.error(e?.response?.data?.error || 'Could not add playlist'),
   });
 
-  const entries = probe?.entries ?? [];
+  const entries = probe.entries;
   const allSelected = entries.length > 0 && selected.size === entries.length;
 
   const toggle = (idx: number) => setSelected(prev => {
@@ -64,18 +58,18 @@ export function PlaylistReviewModal({ open, url, folder, onClose, onAdded }: Pro
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <ListVideo className="h-4 w-4 text-accent" />
-            <span className="truncate">{probe?.title || 'Playlist'}</span>
+            <span className="truncate">{probe.title || 'Playlist'}</span>
           </DialogTitle>
         </DialogHeader>
 
         <DialogBody className="space-y-3">
-          {probeQuery.isLoading ? (
+          {probe.loading && entries.length === 0 ? (
             <div className="flex items-center justify-center gap-2 py-12 text-text-muted">
               <Loader2 className="h-5 w-5 animate-spin" /> Reading playlist…
             </div>
-          ) : probeQuery.isError ? (
+          ) : probe.error && entries.length === 0 ? (
             <p className="rounded-lg bg-danger/10 px-3 py-6 text-center text-sm text-danger">
-              {(probeQuery.error as any)?.response?.data?.error || 'Could not read this playlist.'}
+              {probe.error}
             </p>
           ) : entries.length === 0 ? (
             <p className="py-8 text-center text-sm text-text-muted">No videos found in this URL.</p>
@@ -84,6 +78,11 @@ export function PlaylistReviewModal({ open, url, folder, onClose, onAdded }: Pro
               {/* Toolbar */}
               <div className="flex items-center gap-3 text-xs">
                 <span className="text-text-muted">{selected.size}/{entries.length} selected</span>
+                {probe.loading && (
+                  <span className="flex items-center gap-1 text-text-muted">
+                    <Loader2 className="h-3 w-3 animate-spin" /> loading more…
+                  </span>
+                )}
                 <button
                   onClick={() => setSelected(allSelected ? new Set() : new Set(entries.map(e => e.index)))}
                   className="font-medium text-accent hover:underline"
@@ -125,6 +124,12 @@ export function PlaylistReviewModal({ open, url, folder, onClose, onAdded }: Pro
                   );
                 })}
               </div>
+
+              {probe.error && (
+                <p className="rounded-lg bg-danger/10 px-3 py-2 text-xs text-danger">
+                  Stopped after {entries.length} videos: {probe.error}
+                </p>
+              )}
 
               {/* Footer */}
               <div className="flex justify-end gap-2 pt-1">

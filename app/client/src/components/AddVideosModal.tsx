@@ -13,9 +13,10 @@ import { Progress } from './ui/progress';
 import { downloadsApi } from '@/api/downloads';
 import { videosApi } from '@/api/videos';
 import { useSSE } from '@/hooks/useSSE';
+import { usePlaylistProbe } from '@/hooks/usePlaylistProbe';
 import { useDownloadsStore } from '@/stores/downloadsStore';
 import { formatBytes } from '@/lib/utils';
-import type { DownloadJob, BatchJob, BatchItem, PlaylistEntry } from '@/types';
+import type { DownloadJob, BatchJob, BatchItem } from '@/types';
 
 type Tab = 'url' | 'upload';
 
@@ -284,7 +285,7 @@ export function AddVideosModal({ open, onClose, currentFolder }: AddVideosModalP
   const [folder, setFolder] = useState(currentFolder ?? '');
   const [concurrency, setConcurrency] = useState(2);
   const [isPlaylist, setIsPlaylist] = useState(false);
-  const [probe, setProbe] = useState<{ title: string; entries: PlaylistEntry[] } | null>(null);
+  const [probeUrl, setProbeUrl] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [filename, setFilename] = useState('');
   const [createSubfolder, setCreateSubfolder] = useState(true);
@@ -311,15 +312,30 @@ export function AddVideosModal({ open, onClose, currentFolder }: AddVideosModalP
     setSubfolderName(randomFolderName());
   }, [open, currentFolder]);
 
-  const probeMutation = useMutation({
-    mutationFn: () => downloadsApi.probePlaylist(url),
-    onSuccess: data => {
-      setProbe(data);
-      setSelected(new Set(data.entries.map(e => e.index)));
-      setSubfolderName(sanitizeName(data.title));
-    },
-    onError: (err: any) => toast.error(err.response?.data?.error || 'Failed to read playlist'),
-  });
+  // Entries stream in while the playlist is read; each batch arrives selected.
+  const probeState = usePlaylistProbe(probeUrl, entries =>
+    setSelected(prev => new Set([...prev, ...entries.map(e => e.index)])));
+  const probe = probeUrl && probeState.entries.length
+    ? { title: probeState.title || 'Playlist', entries: probeState.entries }
+    : null;
+  const previewing = !!probeUrl && probeState.loading && !probeState.entries.length;
+  const startPreview = () => { setSelected(new Set()); setProbeUrl(url); };
+
+  useEffect(() => {
+    if (probeState.title) setSubfolderName(sanitizeName(probeState.title));
+  }, [probeState.title]);
+
+  useEffect(() => {
+    if (!probeState.error) return;
+    if (probeState.entries.length) {
+      toast.error(`Stopped after ${probeState.entries.length} videos: ${probeState.error}`);
+    } else {
+      toast.error(probeState.error);
+      setProbeUrl(null);
+    }
+    // Only react to a new error, not to later entry changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [probeState.error]);
 
   const downloadMutation = useMutation({
     mutationFn: async () => {
@@ -340,22 +356,22 @@ export function AddVideosModal({ open, onClose, currentFolder }: AddVideosModalP
         const destFolder = createSubfolder && subfolderName.trim()
           ? (folder ? `${folder}/${subfolderName.trim()}` : subfolderName.trim())
           : folder;
-        for (const j of data.jobs as { id: string; url: string }[]) {
+        for (const j of data.jobs as { id: string; url: string; title?: string }[]) {
           addJob({
-            id: j.id, url: j.url, title: 'Fetching info…',
+            id: j.id, url: j.url, title: j.title || 'Fetching info…',
             status: 'queued', progress: 0, folder: destFolder, startedAt: Date.now(),
           });
         }
         if (data.duplicates) toast.info(`${data.duplicates} already in the queue — skipped`);
         qc.invalidateQueries({ queryKey: ['tree'] });
-        setUrl(''); setProbe(null); setFilename('');
+        setUrl(''); setProbeUrl(null); setFilename('');
         qc.invalidateQueries({ queryKey: ['videos'] });
       } else if (data?.id) {
         addJob({
           id: data.id, url, title: 'Fetching info…',
           status: 'queued', progress: 0, folder, startedAt: Date.now(),
         });
-        setUrl(''); setProbe(null); setFilename('');
+        setUrl(''); setProbeUrl(null); setFilename('');
         qc.invalidateQueries({ queryKey: ['videos'] });
       }
     },
@@ -424,20 +440,20 @@ export function AddVideosModal({ open, onClose, currentFolder }: AddVideosModalP
                     onChange={e => {
                       setUrl(e.target.value);
                       if (autoDetectPlaylist(e.target.value)) setIsPlaylist(true);
-                      setProbe(null);
+                      setProbeUrl(null);
                     }}
                     placeholder="https://youtube.com/watch?v=… or playlist URL"
                     onKeyDown={e => {
                       if (e.key === 'Enter')
-                        isPlaylist ? probeMutation.mutate() : downloadMutation.mutate();
+                        isPlaylist && !probe ? startPreview() : downloadMutation.mutate();
                     }}
                     className="flex-1"
                   />
                   <Button
-                    onClick={() => isPlaylist ? probeMutation.mutate() : downloadMutation.mutate()}
-                    disabled={!url.trim() || probeMutation.isPending || downloadMutation.isPending}
+                    onClick={() => isPlaylist && !probe ? startPreview() : downloadMutation.mutate()}
+                    disabled={!url.trim() || previewing || downloadMutation.isPending}
                   >
-                    {probeMutation.isPending || downloadMutation.isPending
+                    {previewing || downloadMutation.isPending
                       ? <Loader2 className="h-4 w-4 animate-spin" />
                       : isPlaylist && !probe ? <ListVideo className="h-4 w-4" />
                       : <Play className="h-4 w-4" />}
@@ -450,7 +466,7 @@ export function AddVideosModal({ open, onClose, currentFolder }: AddVideosModalP
                     <input
                       type="checkbox"
                       checked={isPlaylist}
-                      onChange={e => { setIsPlaylist(e.target.checked); setProbe(null); setFilename(''); }}
+                      onChange={e => { setIsPlaylist(e.target.checked); setProbeUrl(null); setFilename(''); }}
                       className="rounded accent-accent"
                     />
                     This is a playlist
@@ -579,6 +595,7 @@ export function AddVideosModal({ open, onClose, currentFolder }: AddVideosModalP
                     <div className="flex items-center justify-between border-b border-border px-4 py-2.5">
                       <p className="text-sm font-medium text-text-primary">{probe.title}</p>
                       <div className="flex items-center gap-2">
+                        {probeState.loading && <Loader2 className="h-3 w-3 animate-spin text-text-muted" />}
                         <span className="text-xs text-text-muted">{selected.size}/{probe.entries.length} selected</span>
                         <button onClick={() => setSelected(new Set(probe.entries.map(e => e.index)))} className="text-xs text-accent hover:underline">All</button>
                         <button onClick={() => setSelected(new Set())} className="text-xs text-text-muted hover:text-text-primary">None</button>

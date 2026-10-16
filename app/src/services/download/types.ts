@@ -31,6 +31,8 @@ export interface EnqueueInput {
   filename?: string; // optional explicit output filename (no extension)
   groupId?: string;    // playlist grouping — items sharing a groupId belong together
   groupTitle?: string; // playlist title, for the group header
+  title?: string;      // known up front for playlist entries; otherwise filled while preparing
+  thumbUrl?: string;
 }
 
 // A single unit of work. Carries enough metadata that a retry is just a re-run

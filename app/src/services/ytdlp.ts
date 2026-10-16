@@ -1,11 +1,12 @@
 import { execFile, spawn, spawnSync } from 'child_process';
+import type { ChildProcess } from 'child_process';
 import { promisify } from 'util';
 import fs from 'fs';
 import path from 'path';
 import { getProxy, COOKIES_PATH, YT_DLP_LOCAL, DENO_LOCAL } from '../config';
 import { fetchCookiesViaBrowser } from './browserCookies';
 import { prepareCookiesFile } from './cookieJar';
-import type { PlaylistProbeResult, PlaylistEntry, YtDlpVersionInfo } from '../types';
+import type { PlaylistEntry, YtDlpVersionInfo } from '../types';
 
 const execFileP = promisify(execFile);
 
@@ -188,39 +189,145 @@ function isAgeGateError(err: unknown): boolean {
   return /410|403 forbidden|age.?gate|age.?verif|video.*not available|not available.*country|confirm your age/i.test(msg);
 }
 
+// The useful part of a failed yt-dlp run. execFile's own message starts with
+// "Command failed: <the whole command line>", which buries yt-dlp's ERROR line.
+export function ytErrorMessage(err: unknown): string {
+  const e = err as { stderr?: string; message?: string; killed?: boolean } | undefined;
+  const lines = `${e?.stderr || ''}\n${e?.message || ''}`.split('\n').map(l => l.trim());
+  const errLine = lines.filter(l => l.startsWith('ERROR:')).pop();
+  if (errLine) return errLine;
+  if (e?.killed) return 'yt-dlp timed out';
+  return lines.find(l => l && !l.startsWith('Command failed:')) || e?.message || String(err);
+}
+
 // Run fn; on age-gate error fetch cookies via browser and retry once.
 async function withAgeGateRetry<T>(url: string, fn: () => Promise<T>): Promise<T> {
   try {
     return await fn();
   } catch (err) {
-    if (!isAgeGateError(err)) throw err;
+    const readable = new Error(ytErrorMessage(err));
+    if (!isAgeGateError(readable)) throw readable;
     console.log(`[ytdlp] age-gate detected for ${url} — launching browser to accept…`);
     await fetchCookiesViaBrowser(url);
-    return await fn();
+    try { return await fn(); } catch (retryErr) { throw new Error(ytErrorMessage(retryErr)); }
   }
 }
 
-export async function fetchPlaylistEntries(url: string): Promise<PlaylistProbeResult> {
-  const run = () => execFileP(ytDlpBin(), [
-    '-J', '--flat-playlist', '--no-warnings', ...ytNetArgs(), normalizeUrl(url),
-  ], { timeout: 180000, maxBuffer: 50 * 1024 * 1024 });
+// Entries are handed over in batches of this many, or after FLUSH_MS, whichever
+// comes first — the UI fills in steadily without one event per entry.
+const PLAYLIST_BATCH = 50;
+const PLAYLIST_FLUSH_MS = 500;
+// yt-dlp prints a page of entries every second or two. This long with no output
+// at all means it is stuck, not slow — there is deliberately no overall limit.
+const PLAYLIST_IDLE_MS = 120000;
 
-  const { stdout } = await withAgeGateRetry(url, run);
+// One entry from a `--flat-playlist -j` line, or null for anything that is not
+// a playlist entry (a single video's own info, non-JSON output).
+export function parsePlaylistLine(line: string): { entry: PlaylistEntry; playlistTitle: string } | null {
+  let e: any;
+  try { e = JSON.parse(line); } catch { return null; }
+  if (!e || typeof e.playlist_index !== 'number') return null;
+  return {
+    entry: {
+      index: e.playlist_index,
+      title: decodeHtml(e.title) || `Item ${e.playlist_index}`,
+      url: e.url || e.webpage_url,
+      duration: e.duration,
+      thumbnail: e.thumbnail || e.thumbnails?.[0]?.url,
+    },
+    playlistTitle: decodeHtml(e.playlist_title || e.playlist || ''),
+  };
+}
 
-  const j = JSON.parse(stdout);
-  const rawEntries: any[] = j.entries || [];
-  const entries: PlaylistEntry[] = rawEntries.map((e: any, i: number) => ({
-    index: i + 1,
-    title: decodeHtml(e.title) || `Item ${i + 1}`,
-    url: e.url || e.webpage_url,
-    duration: e.duration,
-    thumbnail: e.thumbnail || (e.thumbnails?.[0]?.url),
-  }));
+export interface PlaylistStreamHooks {
+  onTitle(title: string): void;
+  onEntries(entries: PlaylistEntry[]): void;
+}
+
+// Lists a playlist while yt-dlp pages through it (--lazy-playlist) instead of
+// waiting for the whole list. A huge playlist is usable after its first page,
+// and a failure late in the list keeps everything read before it. `done`
+// resolves with the number of entries found.
+export function streamPlaylistEntries(url: string, hooks: PlaylistStreamHooks): { done: Promise<number>; stop(): void } {
+  let proc: ChildProcess | null = null;
+  let stopped = false;
+  let count = 0;
+
+  const runOnce = () => new Promise<void>((resolve, reject) => {
+    const child = spawn(ytDlpBin(), [
+      '--flat-playlist', '--lazy-playlist', '-j', '--no-warnings', ...ytNetArgs(), normalizeUrl(url),
+    ], { stdio: ['ignore', 'pipe', 'pipe'] });
+    proc = child;
+
+    let titled = false;
+    let partial = '';
+    let stderr = '';
+    let batch: PlaylistEntry[] = [];
+    let flushTimer: NodeJS.Timeout | null = null;
+    let idleTimer: NodeJS.Timeout | null = null;
+    let timedOut = false;
+
+    const flush = () => {
+      if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
+      if (batch.length) { hooks.onEntries(batch); batch = []; }
+    };
+    const touch = () => {
+      if (idleTimer) clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => { timedOut = true; child.kill('SIGTERM'); }, PLAYLIST_IDLE_MS);
+    };
+    const take = (line: string) => {
+      const parsed = parsePlaylistLine(line);
+      if (!parsed) return;
+      if (!titled) { titled = true; hooks.onTitle(parsed.playlistTitle || 'Playlist'); }
+      batch.push(parsed.entry);
+      count++;
+    };
+
+    touch();
+    child.stdout.on('data', (chunk: Buffer) => {
+      touch();
+      const lines = (partial + chunk.toString()).split('\n');
+      partial = lines.pop() ?? '';
+      lines.forEach(take);
+      if (batch.length >= PLAYLIST_BATCH) flush();
+      else if (batch.length && !flushTimer) flushTimer = setTimeout(flush, PLAYLIST_FLUSH_MS);
+    });
+    child.stderr.on('data', (chunk: Buffer) => {
+      touch();
+      stderr = (stderr + chunk.toString()).slice(-65536);
+    });
+    child.on('error', err => {
+      if (idleTimer) clearTimeout(idleTimer);
+      flush();
+      reject(err);
+    });
+    child.on('close', code => {
+      if (idleTimer) clearTimeout(idleTimer);
+      if (partial) take(partial);
+      flush();
+      if (stopped || code === 0) return resolve();
+      reject(new Error(timedOut
+        ? 'yt-dlp stopped responding while reading the playlist'
+        : ytErrorMessage({ stderr, message: `yt-dlp exited with code ${code}` })));
+    });
+  });
+
+  const done = (async () => {
+    try {
+      await runOnce();
+    } catch (err) {
+      // Retrying after entries went out would list them twice.
+      if (stopped || count > 0 || !isAgeGateError(err)) throw err;
+      console.log(`[ytdlp] age-gate detected for ${url} — launching browser to accept…`);
+      await fetchCookiesViaBrowser(url);
+      if (!stopped) await runOnce();
+    }
+    return count;
+  })();
 
   return {
-    title: decodeHtml(j.title || j.playlist_title || 'Playlist'),
-    count: entries.length,
-    entries,
+    done,
+    stop() { stopped = true; try { proc?.kill('SIGTERM'); } catch { /* already gone */ } },
   };
 }
 

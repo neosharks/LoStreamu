@@ -142,12 +142,6 @@ export interface PlaylistEntry {
   thumbnail?: string;
 }
 
-export interface PlaylistProbe {
-  title: string;
-  count: number;
-  entries: PlaylistEntry[];
-}
-
 export interface YtDlpVersion {
   current: string | null;
   latest: string | null;

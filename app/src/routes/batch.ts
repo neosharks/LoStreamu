@@ -5,7 +5,7 @@ import crypto from 'crypto';
 import type { Response } from 'express';
 import { requireAuth } from '../middleware/auth';
 import { rescan, safePath, getMediaRoot, buildMeta } from '../services/library';
-import { ytNetArgs, ytSpeedArgs, ytFilterArgs, isFilteredOut, spawnDownload, fetchPlaylistEntries, netHint, normalizeUrl } from '../services/ytdlp';
+import { ytNetArgs, ytSpeedArgs, ytFilterArgs, isFilteredOut, spawnDownload, streamPlaylistEntries, netHint, normalizeUrl } from '../services/ytdlp';
 import { downloadQueue } from '../services/download';
 import type { BatchJob, BatchItem } from '../types';
 
@@ -173,14 +173,26 @@ async function runBatch(b: BatchJob): Promise<void> {
 
 // ── Routes ────────────────────────────────────────────────────────────────────
 
-router.post('/playlist/probe', requireAuth, async (req, res) => {
-  const url = normalizeUrl(String(req.body?.url || '').trim());
+// Lists a playlist as yt-dlp pages through it. SSE: meta {title}, then
+// entries {entries} batches, then done {count} or failed {error}. Entries
+// already sent stay valid when it fails, so a big playlist never all-or-nothings.
+router.get('/playlist/probe/stream', requireAuth, (req, res) => {
+  const url = normalizeUrl(String(req.query.url || '').trim());
   if (!url) { res.status(400).json({ error: 'url required' }); return; }
-  try {
-    res.json(await fetchPlaylistEntries(url));
-  } catch (err: any) {
-    res.status(500).json({ error: netHint(err.message || 'Probe failed') });
-  }
+  sseHeaders(res);
+  const send = (event: string, data: unknown) => {
+    try { res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); } catch {}
+  };
+
+  const stream = streamPlaylistEntries(url, {
+    onTitle: title => send('meta', { title }),
+    onEntries: entries => send('entries', { entries }),
+  });
+  req.on('close', () => stream.stop());
+  stream.done
+    .then(count => send('done', { count }))
+    .catch((err: Error) => send('failed', { error: netHint(err.message || 'Could not read playlist') }))
+    .finally(() => res.end());
 });
 
 // Playlist download = bulk-enqueue every selected entry into the SAME central
@@ -200,12 +212,16 @@ router.post('/playlist/download', requireAuth, (req, res) => {
   const groupTitle = String(req.body?.title || 'Playlist');
   const inputs = rawItems
     .filter(i => i.url)
-    .map(i => ({ url: String(i.url), folder, destAbs, groupId, groupTitle }));
+    .map(i => ({
+      url: String(i.url), folder, destAbs, groupId, groupTitle,
+      title: i.title ? String(i.title) : undefined,
+      thumbUrl: i.thumbnail ? String(i.thumbnail) : undefined,
+    }));
   if (!inputs.length) { res.status(400).json({ error: 'No downloadable items in playlist' }); return; }
 
   const { added, duplicates } = downloadQueue.enqueueMany(inputs);
   res.json({
-    jobs: added.map(i => ({ id: i.id, url: i.url, folder: i.folder })),
+    jobs: added.map(i => ({ id: i.id, url: i.url, folder: i.folder, title: i.title })),
     duplicates,
   });
 });

@@ -4,7 +4,7 @@
 import assert from 'assert';
 import {
   isYouTubeUrl, ytFilterArgs, ytFormatArgs, MIN_DURATION_SEC, hasChromeImpersonation, supportsJsRuntimes,
-  ytNetArgs, ytSpeedArgs,
+  ytNetArgs, ytSpeedArgs, ytErrorMessage, parsePlaylistLine,
 } from '../src/services/ytdlp';
 
 let passed = 0;
@@ -91,6 +91,28 @@ const NON_YT = [
     // page pushed big playlists past the probe timeout ("stuck on fetching info").
     assert.ok(ytSpeedArgs().includes('--sleep-requests'));
     assert.ok(!ytNetArgs().includes('--sleep-requests'));
+  });
+
+  await test('ytErrorMessage: surfaces yt-dlp\'s ERROR line, not the echoed command', () => {
+    const err = Object.assign(
+      new Error('Command failed: yt-dlp -J --flat-playlist --no-warnings --cookies /x/cookies.txt --no-check-certificates https://y\nERROR: [youtube:tab] PLx: The playlist does not exist.\n'),
+      { stderr: 'ERROR: [youtube:tab] PLx: The playlist does not exist.\n' },
+    );
+    assert.equal(ytErrorMessage(err), 'ERROR: [youtube:tab] PLx: The playlist does not exist.');
+    assert.equal(ytErrorMessage(Object.assign(new Error('Command failed: yt-dlp -J x\n'), { killed: true, stderr: '' })), 'yt-dlp timed out');
+    assert.equal(ytErrorMessage({ stderr: 'Python 3.8 is no longer supported\n', message: 'yt-dlp exited with code 1' }), 'Python 3.8 is no longer supported');
+  });
+
+  await test('parsePlaylistLine: reads a flat entry, skips non-entries', () => {
+    const p = parsePlaylistLine(JSON.stringify({
+      playlist_index: 3, playlist_title: 'Mix &amp; Match', title: 'A &quot;B&quot;',
+      url: 'https://www.youtube.com/watch?v=abc', duration: 61, thumbnails: [{ url: 'https://i/t.jpg' }],
+    }))!;
+    assert.deepEqual(p.entry, { index: 3, title: 'A "B"', url: 'https://www.youtube.com/watch?v=abc', duration: 61, thumbnail: 'https://i/t.jpg' });
+    assert.equal(p.playlistTitle, 'Mix & Match');
+    assert.equal(parsePlaylistLine(JSON.stringify({ id: 'abc', title: 'single video' })), null);
+    assert.equal(parsePlaylistLine('[youtube] not json'), null);
+    assert.equal(parsePlaylistLine(''), null);
   });
 
   console.log(`\n${passed} passed`);
