@@ -85,7 +85,6 @@ export function ytNetArgs(): string[] {
     '--fragment-retries', '10',
     '--socket-timeout', '30',
     '--extractor-retries', '5',
-    '--sleep-requests', '2',
     '--no-check-certificates',
   );
   return args;
@@ -94,9 +93,12 @@ export function ytNetArgs(): string[] {
 // Speed flags for actual media downloads (NOT metadata probes).
 // - concurrent-fragments: parallelise DASH/HLS chunk fetches (the #1 throughput win)
 // - http-chunk-size: chunked HTTP sidesteps YouTube's single-connection throttling
-// Both are network-bound — negligible CPU, so they don't undo the CPU work above.
+// - sleep-requests: pace extraction requests to stay under rate limits. Never on
+//   probes: a playlist listing pages through 100 entries per request, so a 2s
+//   sleep per page pushed big playlists and channels past the probe timeout.
+// All network-bound — negligible CPU, so they don't undo the CPU work above.
 export function ytSpeedArgs(): string[] {
-  return ['--concurrent-fragments', '4', '--http-chunk-size', '10M'];
+  return ['--concurrent-fragments', '4', '--http-chunk-size', '10M', '--sleep-requests', '2'];
 }
 
 // Format selection + container flags shared by every media download.
@@ -201,7 +203,7 @@ async function withAgeGateRetry<T>(url: string, fn: () => Promise<T>): Promise<T
 export async function fetchPlaylistEntries(url: string): Promise<PlaylistProbeResult> {
   const run = () => execFileP(ytDlpBin(), [
     '-J', '--flat-playlist', '--no-warnings', ...ytNetArgs(), normalizeUrl(url),
-  ], { timeout: 60000, maxBuffer: 50 * 1024 * 1024 });
+  ], { timeout: 180000, maxBuffer: 50 * 1024 * 1024 });
 
   const { stdout } = await withAgeGateRetry(url, run);
 

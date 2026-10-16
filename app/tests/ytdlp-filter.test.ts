@@ -4,6 +4,7 @@
 import assert from 'assert';
 import {
   isYouTubeUrl, ytFilterArgs, ytFormatArgs, MIN_DURATION_SEC, hasChromeImpersonation, supportsJsRuntimes,
+  ytNetArgs, ytSpeedArgs,
 } from '../src/services/ytdlp';
 
 let passed = 0;
@@ -83,6 +84,13 @@ const NON_YT = [
     assert.equal(supportsJsRuntimes('2025.11.12.233212'), true); // nightly build suffix
     assert.equal(supportsJsRuntimes('2025.10.22'), false);
     assert.equal(supportsJsRuntimes(''), false);
+  });
+
+  await test('request pacing: downloads sleep between requests, probes do not', () => {
+    // A playlist probe pages through 100 entries per request; sleeping on each
+    // page pushed big playlists past the probe timeout ("stuck on fetching info").
+    assert.ok(ytSpeedArgs().includes('--sleep-requests'));
+    assert.ok(!ytNetArgs().includes('--sleep-requests'));
   });
 
   console.log(`\n${passed} passed`);
