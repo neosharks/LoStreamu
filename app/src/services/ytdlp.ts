@@ -4,6 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import { getProxy, COOKIES_PATH, YT_DLP_LOCAL, DENO_LOCAL } from '../config';
 import { fetchCookiesViaBrowser } from './browserCookies';
+import { prepareCookiesFile } from './cookieJar';
 import type { PlaylistProbeResult, PlaylistEntry, YtDlpVersionInfo } from '../types';
 
 const execFileP = promisify(execFile);
@@ -60,7 +61,7 @@ function ytDlpCaps(): YtDlpCaps {
 export function ytNetArgs(): string[] {
   const caps = ytDlpCaps();
   const args: string[] = [];
-  if (fs.existsSync(COOKIES_PATH)) args.push('--cookies', COOKIES_PATH);
+  if (prepareCookiesFile(COOKIES_PATH)) args.push('--cookies', COOKIES_PATH);
   const proxy = getProxy();
   if (proxy) args.push('--proxy', proxy);
   // Impersonate Chrome at the TLS + HTTP level — fixes connection-reset-by-peer
@@ -168,8 +169,8 @@ export function netHint(msg: string): string {
     return msg + ' — yt-dlp is missing the curl-cffi dependency. Fix: pip3 install --break-system-packages curl-cffi';
   if (/HTTP Error 410|410.*Gone/i.test(msg))
     return msg + ' — Site rejected the request (410). Try updating yt-dlp via the navbar button.';
-  if (/sign.?in|log.?in required|age.?verif|members.?only|premium|private|video.*not available|not available.*country|account required/i.test(msg))
-    return msg + ' — Authentication required. Drop a cookies.txt (Netscape format) next to server.js and retry.';
+  if (/sign.?in|log.?in required|logged.?in|account credentials|age.?verif|members.?only|premium|private|video.*not available|not available.*country|account required/i.test(msg))
+    return msg + ` — Authentication required. Export this site's cookies from a logged-in browser to ${COOKIES_PATH} (Netscape or JSON) and retry.`;
   if (/reset by peer|errno 104|connection refused|timed out|network is unreachable|getaddrinfo|failed to resolve/i.test(msg))
     return msg + (getProxy()
       ? ' — Even via the configured proxy. Check the proxy can reach this site.'
