@@ -30,8 +30,8 @@ export function PlaylistReviewModal({ open, url, folder, onClose, onAdded }: Pro
     mutationFn: () => {
       const items = probe.entries
         .filter(e => selected.has(e.index))
-        .map(e => ({ index: e.index, title: e.title, url: e.url, thumbnail: e.thumbnail }));
-      return downloadsApi.startBatch({ url, folder, title: probe.title || 'Playlist', items });
+        .map(e => ({ index: e.index, url: e.url, thumbnail: e.thumbnail }));
+      return downloadsApi.startBatch({ url, folder, items });
     },
     onSuccess: (data) => {
       const added = data.jobs.length;

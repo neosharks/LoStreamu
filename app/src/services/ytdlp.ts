@@ -3,7 +3,7 @@ import type { ChildProcess } from 'child_process';
 import { promisify } from 'util';
 import fs from 'fs';
 import path from 'path';
-import { getProxy, COOKIES_PATH, YT_DLP_LOCAL, DENO_LOCAL } from '../config';
+import { getProxy, getMinDurationSec, COOKIES_PATH, YT_DLP_LOCAL, DENO_LOCAL } from '../config';
 import { fetchCookiesViaBrowser } from './browserCookies';
 import { prepareCookiesFile } from './cookieJar';
 import type { PlaylistEntry, YtDlpVersionInfo } from '../types';
@@ -129,10 +129,6 @@ export function ytFormatArgs(): string[] {
   ];
 }
 
-// Minimum video length to download. Anything shorter is skipped by yt-dlp
-// (it reads duration from metadata first and never downloads the media).
-export const MIN_DURATION_SEC = 600; // 10 minutes
-
 // True for YouTube URLs (any subdomain, plus youtu.be short links and the
 // privacy-enhanced youtube-nocookie.com host). Malformed URLs → false.
 export function isYouTubeUrl(url: string): boolean {
@@ -146,17 +142,30 @@ export function isYouTubeUrl(url: string): boolean {
   }
 }
 
-// yt-dlp filter that rejects videos under MIN_DURATION_SEC — EXCEPT for
-// YouTube, where a video of any length is allowed. A rejected video makes
-// yt-dlp print "does not pass filter" and exit 0 without downloading.
-export function ytFilterArgs(url: string): string[] {
-  if (isYouTubeUrl(url)) return [];
-  return ['--match-filter', `duration >= ${MIN_DURATION_SEC}`];
+// yt-dlp filter that rejects videos shorter than the configured minimum
+// (Downloads page setting) — EXCEPT for YouTube, where a video of any length is
+// allowed. yt-dlp reads the duration from metadata first, so a rejected video
+// prints "does not pass filter" and exits 0 without downloading any media.
+export function ytFilterArgs(url: string, minSec: number = getMinDurationSec()): string[] {
+  if (isYouTubeUrl(url) || minSec <= 0) return [];
+  return ['--match-filter', `duration >= ${minSec}`];
 }
 
 // True if a yt-dlp output line indicates the video was skipped by the filter.
 export function isFilteredOut(line: string): boolean {
   return /does not pass filter/i.test(line);
+}
+
+// The error shown for a video the duration filter skipped.
+export function filteredOutMessage(minSec: number = getMinDurationSec()): string {
+  const min = Math.round((minSec / 60) * 10) / 10;
+  return `Skipped — shorter than ${min} minute${min === 1 ? '' : 's'}`;
+}
+
+// True if yt-dlp skipped the video because this folder's download archive
+// already lists it (it exits 0 and writes no file).
+export function isAlreadyArchived(line: string): boolean {
+  return /has already been recorded in the archive/i.test(line);
 }
 
 function decodeHtml(s: string): string {
@@ -331,7 +340,9 @@ export function streamPlaylistEntries(url: string, hooks: PlaylistStreamHooks): 
   };
 }
 
-export async function fetchMeta(url: string): Promise<{ title: string; uploader?: string; thumbUrl?: string }> {
+// Only the thumbnail is kept: the source title never leaves yt-dlp, so the
+// original name appears nowhere — not in the queue, the UI or the saved queue file.
+export async function fetchThumbnail(url: string): Promise<string | undefined> {
   const run = () => execFileP(ytDlpBin(), [
     '-J', '--no-playlist', '--no-warnings', ...ytNetArgs(), normalizeUrl(url),
   ], { timeout: 30000, maxBuffer: 10 * 1024 * 1024 });
@@ -339,11 +350,7 @@ export async function fetchMeta(url: string): Promise<{ title: string; uploader?
   const { stdout } = await withAgeGateRetry(url, run);
 
   const j = JSON.parse(stdout);
-  return {
-    title: decodeHtml(j.title || j.fulltitle || ''),
-    uploader: decodeHtml(j.uploader || j.channel || j.extractor_key || ''),
-    thumbUrl: j.thumbnail || j.thumbnails?.[0]?.url,
-  };
+  return j.thumbnail || j.thumbnails?.[0]?.url;
 }
 
 let _latestCache: { tag: string | null; at: number } = { tag: null, at: 0 };

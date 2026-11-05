@@ -1,6 +1,6 @@
 # LoStreamu
 
-A self-hosted, PIN-gated video streamer for your homelab — think a lightweight Plex. The app opens on a Netflix-style profile picker: tap yours, type your 6-digit PIN, and you are in your library. Add videos by pasting any URL yt-dlp supports (single video or whole playlist), or drop files via the upload tab.
+A self-hosted, PIN-gated video streamer for your homelab — think a lightweight Plex. The app opens on a Netflix-style profile picker: tap yours, type your 6-digit PIN, and you are in your library. Everything is added from the Downloads page: paste any URL yt-dlp supports (single video or whole playlist) or upload a file. Videos shorter than a minimum you set there (5 minutes by default; YouTube is exempt) are skipped, downloads are saved under random names with no trace of the source title, and finished items leave the queue on their own.
 
 **Stack:** TypeScript (Express) backend · React 18 + Tailwind CSS frontend · Custom video player · yt-dlp for downloads · ffmpeg for thumbnails + scrub-preview sprites
 

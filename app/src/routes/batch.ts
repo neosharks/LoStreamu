@@ -5,7 +5,7 @@ import crypto from 'crypto';
 import type { Response } from 'express';
 import { requireAuth } from '../middleware/auth';
 import { rescan, safePath, getMediaRoot, buildMeta } from '../services/library';
-import { ytNetArgs, ytSpeedArgs, ytFilterArgs, isFilteredOut, spawnDownload, streamPlaylistEntries, netHint, normalizeUrl } from '../services/ytdlp';
+import { ytNetArgs, ytSpeedArgs, ytFilterArgs, isFilteredOut, filteredOutMessage, spawnDownload, streamPlaylistEntries, netHint, normalizeUrl } from '../services/ytdlp';
 import { downloadQueue } from '../services/download';
 import type { BatchJob, BatchItem } from '../types';
 
@@ -101,7 +101,7 @@ async function runBatch(b: BatchJob): Promise<void> {
         '--download-archive', b.archive,
         ...ytNetArgs(),
         ...ytSpeedArgs(),
-        ...ytFilterArgs(isDirectUrl ? item.url! : b.url),  // skip < 10 min (YouTube exempt: any length)
+        ...ytFilterArgs(isDirectUrl ? item.url! : b.url),  // skip short videos (YouTube exempt: any length)
         isDirectUrl ? '--no-playlist' : '--yes-playlist',
         ...(isDirectUrl ? [] : ['--playlist-items', String(item.index)]),
         '-f', 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best',
@@ -141,7 +141,7 @@ async function runBatch(b: BatchJob): Promise<void> {
           if (item.status !== 'skipped') {
             if (filtered) {
               item.status = 'error';
-              item.error = 'Skipped — shorter than 10 minutes';
+              item.error = filteredOutMessage();
             } else {
               const ok = code === 0 && !item.error;
               item.status = ok ? 'done' : 'error';
@@ -199,7 +199,7 @@ router.get('/playlist/probe/stream', requireAuth, (req, res) => {
 // queue as single downloads, so the whole app still processes one at a time.
 router.post('/playlist/download', requireAuth, (req, res) => {
   const folder = String(req.body?.folder || '').replace(/^[/\\]+/, '');
-  const rawItems: { index: number; title: string; url?: string; thumbnail?: string }[] =
+  const rawItems: { index: number; url?: string; thumbnail?: string }[] =
     req.body?.items || [];
   if (!rawItems.length) { res.status(400).json({ error: 'items required' }); return; }
 
@@ -207,14 +207,13 @@ router.post('/playlist/download', requireAuth, (req, res) => {
   fs.mkdirSync(destAbs, { recursive: true });
 
   // Tag every entry with a shared group so the UI can show the playlist as one
-  // section with its own controls.
+  // section with its own controls. Source titles (video and playlist) are
+  // deliberately dropped: items only ever carry their random file name.
   const groupId = crypto.randomBytes(6).toString('hex');
-  const groupTitle = String(req.body?.title || 'Playlist');
   const inputs = rawItems
     .filter(i => i.url)
     .map(i => ({
-      url: String(i.url), folder, destAbs, groupId, groupTitle,
-      title: i.title ? String(i.title) : undefined,
+      url: String(i.url), folder, destAbs, groupId,
       thumbUrl: i.thumbnail ? String(i.thumbnail) : undefined,
     }));
   if (!inputs.length) { res.status(400).json({ error: 'No downloadable items in playlist' }); return; }

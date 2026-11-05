@@ -29,6 +29,10 @@ export interface RegenResult {
 export const settingsApi = {
   getProxy: () => api.get<{ proxy: string }>('/settings').then(r => r.data),
   setProxy: (proxy: string) => api.post('/settings', { proxy }).then(r => r.data),
+  getDownloadSettings: () =>
+    api.get<{ minDurationMin: number }>('/settings/downloads').then(r => r.data),
+  setMinDuration: (minDurationMin: number) =>
+    api.post<{ minDurationMin: number }>('/settings/downloads', { minDurationMin }).then(r => r.data),
   appVersion: () => api.get<AppVersion>('/app/version').then(r => r.data),
   ytdlpVersion: () => api.get<YtDlpVersion>('/ytdlp/version').then(r => r.data),
   ytdlpUpdate: () => api.post<{ ok: boolean; version: string }>('/ytdlp/update').then(r => r.data),

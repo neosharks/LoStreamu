@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { RefreshCw, Settings, LogOut, Plus, Download } from 'lucide-react';
+import { RefreshCw, Settings, LogOut, Download } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from './ui/button';
 import { Logo } from './Logo';
@@ -12,13 +12,12 @@ import { cn } from '@/lib/utils';
 import { AppUpdateModal } from './AppUpdateModal';
 
 interface HeaderProps {
-  onAddVideos: () => void;
   videoCount: number;
   search: string;
   onSearch: (q: string) => void;
 }
 
-export function Header({ onAddVideos, videoCount, search, onSearch }: HeaderProps) {
+export function Header({ videoCount, search, onSearch }: HeaderProps) {
   const navigate = useNavigate();
   const qc = useQueryClient();
   const [showUpdate, setShowUpdate] = useState(false);
@@ -106,9 +105,6 @@ export function Header({ onAddVideos, videoCount, search, onSearch }: HeaderProp
 
       {/* Desktop action buttons */}
       <div className="hidden lg:flex items-center gap-1">
-        <Button size="default" onClick={onAddVideos}>
-          <Plus className="h-4 w-4" /> Add videos
-        </Button>
         <Button size="icon" variant="ghost" onClick={() => navigate('/downloads')} title="Downloads">
           <Download className="h-4 w-4" />
         </Button>
@@ -136,11 +132,6 @@ export function Header({ onAddVideos, videoCount, search, onSearch }: HeaderProp
           <LogOut className="h-4 w-4" />
         </Button>
       </div>
-
-      {/* Mobile: Add videos icon only */}
-      <Button size="icon" variant="ghost" onClick={onAddVideos} className="lg:hidden" title="Add videos">
-        <Plus className="h-4 w-4" />
-      </Button>
     </header>
   );
 }

@@ -172,5 +172,34 @@ async function test(name: string, fn: () => Promise<void> | void) {
     assert.equal(q.list()[0].url, 'b');
   });
 
+  await test('removeCompleted: finished items leave the queue, failures stay', async () => {
+    const eng = new MockEngine();
+    const q = mkQueue(eng, { removeCompleted: true });
+    const completed: string[] = [];
+    q.on('completed', (it: QueueItem) => completed.push(it.id));
+    const a = q.enqueue(input('a')); const b = q.enqueue(input('b')); await tick();
+    eng.active().settle({ status: 'completed' }); await tick();
+    assert.equal(q.get(a.id), undefined, 'a removed once completed');
+    assert.deepEqual(completed, [a.id], 'completed event still fires');
+    assert.equal(q.get(b.id)!.state, 'preparing', 'next item still auto-starts');
+    eng.active().settle({ status: 'failed', error: 'boom' }); await tick();
+    assert.equal(q.get(b.id)!.state, 'failed', 'failed items stay for retry');
+    assert.doesNotThrow(() => q.enqueue(input('a')), 'a removed completed URL can be re-added');
+  });
+
+  await test('title: items are named by their random file name, never the source title', async () => {
+    const eng = new MockEngine();
+    const q = mkQueue(eng);
+    const a = q.enqueue(input('a')); await tick();
+    assert.match(a.filename!, /^[0-9a-f]{16}$/);
+    assert.equal(a.title, a.filename);
+    // A stray title from an engine is ignored: only the thumbnail is taken.
+    eng.active().hooks.onPrepared({ thumbUrl: 'https://i/t.jpg', title: 'Original Title' } as never);
+    assert.equal(q.get(a.id)!.title, a.filename);
+    assert.equal(q.get(a.id)!.thumbUrl, 'https://i/t.jpg');
+    const b = q.enqueue({ ...input('b'), filename: 'chosen' });
+    assert.equal(b.title, 'chosen');
+  });
+
   console.log(`\n${passed} passed`);
 })();

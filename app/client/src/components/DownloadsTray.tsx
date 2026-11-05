@@ -10,7 +10,7 @@ import type { DownloadJob, BatchJob } from '@/types';
 
 // ── Mini job row ──────────────────────────────────────────────────────────────
 
-function TrayJobRow({ jobId, onOpenModal }: { jobId: string; onOpenModal: () => void }) {
+function TrayJobRow({ jobId, onOpen }: { jobId: string; onOpen: () => void }) {
   const { jobs, updateJob, removeJob } = useDownloadsStore();
   const job = jobs.find(j => j.id === jobId);
   // NOTE: no per-job SSE here — the whole queue is observed via ONE connection in
@@ -46,7 +46,7 @@ function TrayJobRow({ jobId, onOpenModal }: { jobId: string; onOpenModal: () => 
         />
       </div>
 
-      <div className="min-w-0 flex-1 cursor-pointer" onClick={onOpenModal}>
+      <div className="min-w-0 flex-1 cursor-pointer" onClick={onOpen}>
         <p className="truncate text-xs font-medium text-text-primary leading-tight">{job.title}</p>
         {isActive && (
           <>
@@ -110,7 +110,7 @@ function TrayJobRow({ jobId, onOpenModal }: { jobId: string; onOpenModal: () => 
 
 // ── Mini batch row ────────────────────────────────────────────────────────────
 
-function TrayBatchRow({ batchId, onOpenModal }: { batchId: string; onOpenModal: () => void }) {
+function TrayBatchRow({ batchId, onOpen }: { batchId: string; onOpen: () => void }) {
   const { batches, updateBatch, removeBatch } = useDownloadsStore();
   const batch = batches.find(b => b.id === batchId);
   const active = batch ? ['running', 'paused'].includes(batch.status) : false;
@@ -136,7 +136,7 @@ function TrayBatchRow({ batchId, onOpenModal }: { batchId: string; onOpenModal: 
         <ListVideo className="h-4 w-4 text-accent" />
       </div>
 
-      <div className="min-w-0 flex-1 cursor-pointer" onClick={onOpenModal}>
+      <div className="min-w-0 flex-1 cursor-pointer" onClick={onOpen}>
         <p className="truncate text-xs font-medium text-text-primary leading-tight">{batch.title}</p>
         <div className="mt-1 flex items-center gap-2">
           <Progress value={pct} className="flex-1 h-1" />
@@ -163,14 +163,11 @@ function TrayBatchRow({ batchId, onOpenModal }: { batchId: string; onOpenModal: 
 
 // ── Tray shell ────────────────────────────────────────────────────────────────
 
-interface DownloadsTrayProps {
-  onOpenModal: () => void;
-}
-
-export function DownloadsTray({ onOpenModal }: DownloadsTrayProps) {
+export function DownloadsTray() {
   const { jobs, batches, setJobs } = useDownloadsStore();
   const [expanded, setExpanded] = useState(true);
   const navigate = useNavigate();
+  const openDownloads = () => navigate('/downloads');
 
   // ONE connection observes the entire queue (replaces N per-job EventSources).
   useSSE<DownloadJob[]>('/api/downloads/events', (name, data) => {
@@ -237,16 +234,16 @@ export function DownloadsTray({ onOpenModal }: DownloadsTrayProps) {
         <>
           <div className="max-h-72 overflow-y-auto divide-y divide-border/40 border-t border-border">
             {sortedJobs.map(j => (
-              <TrayJobRow key={j.id} jobId={j.id} onOpenModal={onOpenModal} />
+              <TrayJobRow key={j.id} jobId={j.id} onOpen={openDownloads} />
             ))}
             {batches.map(b => (
-              <TrayBatchRow key={b.id} batchId={b.id} onOpenModal={onOpenModal} />
+              <TrayBatchRow key={b.id} batchId={b.id} onOpen={openDownloads} />
             ))}
           </div>
 
           <div className="border-t border-border px-4 py-2.5">
             <button
-              onClick={() => navigate('/downloads')}
+              onClick={openDownloads}
               className="w-full rounded-lg py-1 text-xs font-medium text-accent hover:bg-accent/10 transition-colors"
             >
               Manage downloads →

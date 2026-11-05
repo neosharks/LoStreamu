@@ -1,10 +1,11 @@
 /* Runnable filter tests — `npx tsx tests/ytdlp-filter.test.ts` (no framework).
    Covers the duration filter's YouTube exemption: YouTube URLs of any length
-   are allowed (no --match-filter), everything else keeps the 10-min minimum. */
+   are allowed (no --match-filter), everything else keeps the configured minimum
+   (5 minutes by default, set from the Downloads page). */
 import assert from 'assert';
 import {
-  isYouTubeUrl, ytFilterArgs, ytFormatArgs, MIN_DURATION_SEC, hasChromeImpersonation, supportsJsRuntimes,
-  ytNetArgs, ytSpeedArgs, ytErrorMessage, parsePlaylistLine,
+  isYouTubeUrl, ytFilterArgs, ytFormatArgs, hasChromeImpersonation, supportsJsRuntimes,
+  ytNetArgs, ytSpeedArgs, ytErrorMessage, parsePlaylistLine, filteredOutMessage, isAlreadyArchived,
 } from '../src/services/ytdlp';
 
 let passed = 0;
@@ -45,14 +46,27 @@ const NON_YT = [
     for (const u of YT) assert.deepEqual(ytFilterArgs(u), [], `expected empty args: ${u}`);
   });
 
-  await test('ytFilterArgs: 10-min minimum kept for non-YouTube', () => {
+  await test('ytFilterArgs: 5-min default minimum kept for non-YouTube', () => {
     for (const u of NON_YT) {
-      assert.deepEqual(
-        ytFilterArgs(u),
-        ['--match-filter', `duration >= ${MIN_DURATION_SEC}`],
-        `expected duration filter: ${u}`,
-      );
+      assert.deepEqual(ytFilterArgs(u), ['--match-filter', 'duration >= 300'], `expected duration filter: ${u}`);
     }
+  });
+
+  await test('ytFilterArgs: honours a configured minimum, 0 turns the filter off', () => {
+    assert.deepEqual(ytFilterArgs('https://vimeo.com/1', 600), ['--match-filter', 'duration >= 600']);
+    assert.deepEqual(ytFilterArgs('https://vimeo.com/1', 0), []);
+    assert.deepEqual(ytFilterArgs('https://youtu.be/abc', 600), [], 'YouTube stays exempt');
+  });
+
+  await test('filteredOutMessage: names the minimum that skipped the video', () => {
+    assert.equal(filteredOutMessage(300), 'Skipped — shorter than 5 minutes');
+    assert.equal(filteredOutMessage(60), 'Skipped — shorter than 1 minute');
+    assert.equal(filteredOutMessage(), 'Skipped — shorter than 5 minutes', 'default is 5 minutes');
+  });
+
+  await test('isAlreadyArchived: spots yt-dlp skipping a video its archive lists', () => {
+    assert.equal(isAlreadyArchived('[download] abc123: has already been recorded in the archive'), true);
+    assert.equal(isAlreadyArchived('[download]  42.0% of 10.00MiB at 1.00MiB/s ETA 00:05'), false);
   });
 
   await test('ytFormatArgs: prefers browser-safe codecs, mp4 container, faststart', () => {

@@ -30,8 +30,6 @@ export interface EnqueueInput {
   destAbs: string;   // absolute destination path, resolved & snapshotted at enqueue time
   filename?: string; // optional explicit output filename (no extension)
   groupId?: string;    // playlist grouping — items sharing a groupId belong together
-  groupTitle?: string; // playlist title, for the group header
-  title?: string;      // known up front for playlist entries; otherwise filled while preparing
   thumbUrl?: string;
 }
 
@@ -45,10 +43,9 @@ export interface QueueItem {
   destAbs: string;
   filename?: string;
   groupId?: string;
-  groupTitle?: string;
-  // ── metadata (filled during "preparing") ──
+  // Display name: the random file name. The source title is never stored.
   title: string;
-  uploader?: string;
+  // ── metadata (filled during "preparing") ──
   thumbUrl?: string;
   // ── live state ──
   state: QueueState;
@@ -67,7 +64,7 @@ export interface QueueItem {
 // tests, the yt-dlp engine in production.
 
 export interface EngineHooks {
-  onPrepared(meta: { title?: string; uploader?: string; thumbUrl?: string }): void;
+  onPrepared(meta: { thumbUrl?: string }): void;
   onProgress(p: { progress?: number; speed?: string; eta?: string }): void;
   onProcessing(): void;
 }

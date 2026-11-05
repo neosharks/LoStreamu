@@ -97,7 +97,6 @@ export interface DownloadJob {
   id: string;
   url: string;
   title: string;
-  uploader?: string;
   status: DownloadStatus;
   progress: number;
   speed?: string;
@@ -108,7 +107,6 @@ export interface DownloadJob {
   startedAt: number;
   queuePos?: number; // 0 = active, 1+ = position in queue; absent when done/error
   groupId?: string;    // playlist grouping
-  groupTitle?: string;
 }
 
 export interface BatchItem {

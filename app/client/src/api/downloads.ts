@@ -32,9 +32,8 @@ export const downloadsApi = {
   startBatch: (payload: {
     url: string;
     folder: string;
-    title: string;
     concurrency?: number;
-    items: { index: number; title: string; url?: string; thumbnail?: string }[];
+    items: { index: number; url?: string; thumbnail?: string }[];
   }) => api.post<{ jobs: { id: string; url: string; folder: string; title: string }[]; duplicates: number }>(
     '/playlist/download', payload,
   ).then(r => r.data),

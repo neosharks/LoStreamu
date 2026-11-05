@@ -51,6 +51,7 @@ const DEFAULTS: AppConfig = {
   mediaDir: path.join(DATA_DIR, 'media'),
   proxy: '',
   updateUrl: 'https://raw.githubusercontent.com/neosharks/LoStreamu/main/streamvault-app.tar.gz',
+  minDurationMin: 5,
 };
 
 let _config: AppConfig = { ...DEFAULTS };
@@ -73,6 +74,12 @@ export function saveConfig(updates?: Partial<AppConfig>): void {
   if (updates) _config = { ..._config, ...updates };
   fs.mkdirSync(DATA_DIR, { recursive: true });
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(_config, null, 2));
+}
+
+// Shortest video a download accepts, in seconds. 0 turns the filter off.
+export function getMinDurationSec(): number {
+  const min = Number(_config.minDurationMin ?? DEFAULTS.minDurationMin);
+  return Number.isFinite(min) && min > 0 ? Math.round(min * 60) : 0;
 }
 
 export function getProxy(): string {

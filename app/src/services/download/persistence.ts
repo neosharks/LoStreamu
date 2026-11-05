@@ -45,16 +45,17 @@ export function saveQueueSync(order: string[], items: QueueItem[]): void {
 
 // Load persisted queue. Any item that was mid-flight when the process died is
 // reset to 'queued' so it resumes automatically (yt-dlp --continue reuses the
-// partial file). Terminal items are kept as history.
+// partial file). Terminal items are kept as history. Queue files written by
+// older versions held source titles; those are replaced by the file name.
 export function loadQueue(): { order: string[]; items: QueueItem[] } {
   try {
     if (!fs.existsSync(QUEUE_PATH)) return { order: [], items: [] };
     const raw = JSON.parse(fs.readFileSync(QUEUE_PATH, 'utf8')) as Persisted;
     const items = (raw.items || []).map(i => {
-      if (isActive(i.state)) {
-        return { ...i, state: 'queued' as const, progress: 0, speed: undefined, eta: undefined };
-      }
-      return { ...i, speed: undefined, eta: undefined };
+      const { uploader: _u, groupTitle: _g, ...rest } = i as QueueItem & { uploader?: string; groupTitle?: string };
+      const scrubbed: QueueItem = { ...rest, title: rest.filename || rest.id, speed: undefined, eta: undefined };
+      if (isActive(i.state)) return { ...scrubbed, state: 'queued' as const, progress: 0 };
+      return scrubbed;
     });
     // Only keep order entries that still have an item.
     const ids = new Set(items.map(i => i.id));

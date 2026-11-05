@@ -3,8 +3,9 @@ import { YtDlpEngine } from './engine';
 import { rescan, buildMeta } from '../library';
 
 // The one download queue for the whole app. UI/routes observe it; nobody else
-// owns download state.
-export const downloadQueue = new DownloadQueue({ engine: new YtDlpEngine() });
+// owns download state. Finished downloads leave the queue — they live in the
+// library from then on.
+export const downloadQueue = new DownloadQueue({ engine: new YtDlpEngine(), removeCompleted: true });
 
 // When an item finishes, refresh the library so the new file shows up. Kept as
 // an event subscription so the queue stays decoupled from the library service.

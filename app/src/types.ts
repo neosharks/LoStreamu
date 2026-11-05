@@ -3,6 +3,8 @@ export interface AppConfig {
   mediaDir: string;
   proxy?: string;
   updateUrl?: string;
+  /** Downloads shorter than this many minutes are skipped (0 = keep everything). */
+  minDurationMin?: number;
   /** Legacy email/password fields — read once during migration, then removed. */
   email?: string;
   passwordHash?: string;

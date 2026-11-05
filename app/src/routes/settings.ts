@@ -3,7 +3,7 @@ import { z } from 'zod';
 import fs from 'fs';
 import path from 'path';
 import { requireAuth } from '../middleware/auth';
-import { getConfig, saveConfig, APP_DIR } from '../config';
+import { getConfig, saveConfig, getMinDurationSec, APP_DIR } from '../config';
 import { getYtDlpVersion, updateYtDlp } from '../services/ytdlp';
 import { cleanJunk, regenerateThumbnails } from '../services/maintenance';
 
@@ -26,6 +26,26 @@ router.post('/settings', requireAuth, (req, res) => {
   }
   saveConfig({ proxy: parsed.data.proxy });
   res.json({ ok: true, proxy: parsed.data.proxy });
+});
+
+// Downloads shorter than this are skipped. Set from the Downloads page.
+router.get('/settings/downloads', requireAuth, (_req, res) => {
+  res.json({ minDurationMin: getMinDurationSec() / 60 });
+});
+
+router.post('/settings/downloads', requireAuth, (req, res) => {
+  const schema = z.object({
+    minDurationMin: z.number({ invalid_type_error: 'Minimum length must be a number of minutes.' })
+      .int('Minimum length must be whole minutes.')
+      .min(0, 'Minimum length cannot be negative.')
+      .max(600, 'Minimum length can be at most 600 minutes.'),
+  });
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.issues[0]?.message }); return;
+  }
+  saveConfig({ minDurationMin: parsed.data.minDurationMin });
+  res.json({ ok: true, minDurationMin: parsed.data.minDurationMin });
 });
 
 let _appLatestCache: { version: string | null; at: number } = { version: null, at: 0 };

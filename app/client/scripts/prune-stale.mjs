@@ -17,6 +17,8 @@ const REMOVED = [
   // authApi.changePassword, which no longer exists.
   'src/components/AccountModal.tsx',
   'src/components/StatsModal.tsx',
+  // 2.9.4 — "Add videos" folded into the Downloads page.
+  'src/components/AddVideosModal.tsx',
 ];
 
 for (const rel of REMOVED) {

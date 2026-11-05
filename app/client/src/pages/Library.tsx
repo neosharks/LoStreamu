@@ -12,7 +12,6 @@ import { VideoCard } from '@/components/VideoCard';
 import { FolderCard } from '@/components/FolderCard';
 import { Button } from '@/components/ui/button';
 import { Player } from '@/components/Player';
-import { AddVideosModal } from '@/components/AddVideosModal';
 import { DownloadsTray } from '@/components/DownloadsTray';
 import { RenameModal } from '@/components/RenameModal';
 import { ConfirmModal } from '@/components/ConfirmModal';
@@ -132,7 +131,6 @@ export function Library() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const [showAdd, setShowAdd] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
 
   // Bulk selection
@@ -448,11 +446,6 @@ export function Library() {
       onClick: () => setMobileSidebarOpen(true),
     },
     {
-      icon: Plus,
-      label: 'Add',
-      onClick: () => setShowAdd(true),
-    },
-    {
       icon: Download,
       label: 'Downloads',
       onClick: () => navigate('/downloads'),
@@ -468,7 +461,6 @@ export function Library() {
   return (
     <div className="flex h-screen flex-col overflow-hidden">
       <Header
-        onAddVideos={() => setShowAdd(true)}
         videoCount={videos.length}
         search={search}
         onSearch={setSearch}
@@ -734,7 +726,7 @@ export function Library() {
                   <>
                     <p className="text-base font-semibold text-text-primary">Your library is empty</p>
                     <p className="mt-1 text-sm text-text-muted">Paste a link and LoStreamu pulls it in for offline viewing.</p>
-                    <Button className="mt-5" onClick={() => setShowAdd(true)}>
+                    <Button className="mt-5" onClick={() => navigate('/downloads')}>
                       <Plus className="h-4 w-4" /> Add your first video
                     </Button>
                   </>
@@ -794,8 +786,7 @@ export function Library() {
 
       {/* ── Overlays ─────────────────────────────────────────────────────── */}
       {nowPlaying && <Player />}
-      <AddVideosModal open={showAdd} onClose={() => setShowAdd(false)} currentFolder={folder} />
-      {!showAdd && <DownloadsTray onOpenModal={() => setShowAdd(true)} />}
+      <DownloadsTray />
       <RepairTray />
 
       {/* Video rename */}

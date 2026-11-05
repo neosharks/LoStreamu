@@ -1,12 +1,13 @@
-import { memo, useCallback, useEffect, useMemo, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
   ArrowLeft, Plus, Search, Trash2, Pause, Play, X, RotateCw,
-  ChevronUp, ChevronDown, Download as DownloadIcon, FolderPlus, Loader2, Check, ListVideo,
+  ChevronUp, ChevronDown, Download as DownloadIcon, FolderPlus, Loader2, Check, ListVideo, Upload,
 } from 'lucide-react';
 import { downloadsApi } from '@/api/downloads';
+import { settingsApi } from '@/api/settings';
 import { videosApi } from '@/api/videos';
 import { useSSE } from '@/hooks/useSSE';
 import { PlaylistReviewModal } from '@/components/PlaylistReviewModal';
@@ -14,7 +15,7 @@ import { Progress } from '@/components/ui/progress';
 import { cn } from '@/lib/utils';
 import type { DownloadJob, DownloadStatus } from '@/types';
 
-type Filter = 'all' | 'active' | 'queued' | 'done' | 'failed';
+type Filter = 'all' | 'active' | 'queued' | 'failed';
 
 const ACTIVE: DownloadStatus[] = ['starting', 'downloading', 'processing'];
 
@@ -129,6 +130,13 @@ export function Downloads() {
   const [reviewOpen, setReviewOpen] = useState(false);
   const [newFolderOpen, setNewFolderOpen] = useState(false);
   const [newFolder, setNewFolder] = useState('');
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  // Minimum video length, shared by every download (stored on the server).
+  const { data: dlSettings } = useQuery({ queryKey: ['download-settings'], queryFn: settingsApi.getDownloadSettings });
+  const [minDuration, setMinDuration] = useState('');
+  useEffect(() => { if (dlSettings) setMinDuration(String(dlSettings.minDurationMin)); }, [dlSettings]);
 
   const { data: allFolders = [] } = useQuery({ queryKey: ['folders-all'], queryFn: videosApi.allFolders });
   const folderOptions = useMemo(() => folderOptionsFrom(allFolders), [allFolders]);
@@ -144,6 +152,44 @@ export function Downloads() {
     onSuccess: () => { setUrl(''); toast.success('Added to queue'); },
     onError: (e: any) => toast.error(e?.response?.data?.error || 'Could not add download'),
   });
+
+  const minDurationMutation = useMutation({
+    mutationFn: (min: number) => settingsApi.setMinDuration(min),
+    onSuccess: (data) => {
+      qc.setQueryData(['download-settings'], data);
+      toast.success(data.minDurationMin > 0
+        ? `Skipping videos shorter than ${data.minDurationMin} min`
+        : 'Keeping videos of any length');
+    },
+    onError: (e: any) => {
+      toast.error(e?.response?.data?.error || 'Could not save minimum length');
+      if (dlSettings) setMinDuration(String(dlSettings.minDurationMin));
+    },
+  });
+
+  const saveMinDuration = () => {
+    const min = Number(minDuration);
+    if (minDuration.trim() === '' || !Number.isInteger(min) || min < 0) {
+      if (dlSettings) setMinDuration(String(dlSettings.minDurationMin));
+      return;
+    }
+    if (min !== dlSettings?.minDurationMin) minDurationMutation.mutate(min);
+  };
+
+  const uploadFile = async (file: File) => {
+    try {
+      setUploadProgress(0);
+      await downloadsApi.upload(file, folder, setUploadProgress);
+      toast.success('Uploaded successfully');
+      qc.invalidateQueries({ queryKey: ['videos'] });
+      qc.invalidateQueries({ queryKey: ['tree'] });
+    } catch (e: any) {
+      toast.error(e?.response?.data?.error || 'Upload failed');
+    } finally {
+      setUploadProgress(null);
+      if (fileRef.current) fileRef.current.value = '';
+    }
+  };
 
   const createFolderMutation = useMutation({
     mutationFn: () => videosApi.createFolder(newFolder.trim(), folder),
@@ -173,7 +219,6 @@ export function Downloads() {
     all: jobs.length,
     active: jobs.filter(j => ACTIVE.includes(j.status)).length,
     queued: jobs.filter(j => j.status === 'queued' || j.status === 'paused').length,
-    done: jobs.filter(j => j.status === 'done').length,
     failed: jobs.filter(j => j.status === 'error').length,
   }), [jobs]);
 
@@ -184,7 +229,6 @@ export function Downloads() {
       switch (filter) {
         case 'active': return ACTIVE.includes(j.status);
         case 'queued': return j.status === 'queued' || j.status === 'paused';
-        case 'done': return j.status === 'done';
         case 'failed': return j.status === 'error';
         default: return true;
       }
@@ -213,7 +257,7 @@ export function Downloads() {
     const loose: DownloadJob[] = [];
     for (const j of filtered) {
       if (j.groupId) {
-        if (!gmap.has(j.groupId)) gmap.set(j.groupId, { title: j.groupTitle || 'Playlist', jobs: [] });
+        if (!gmap.has(j.groupId)) gmap.set(j.groupId, { title: 'Playlist', jobs: [] });
         gmap.get(j.groupId)!.jobs.push(j);
       } else loose.push(j);
     }
@@ -232,8 +276,7 @@ export function Downloads() {
 
   const chips: { key: Filter; label: string }[] = [
     { key: 'all', label: 'All' }, { key: 'active', label: 'Active' },
-    { key: 'queued', label: 'Queued' }, { key: 'done', label: 'Completed' },
-    { key: 'failed', label: 'Failed' },
+    { key: 'queued', label: 'Queued' }, { key: 'failed', label: 'Failed' },
   ];
 
   return (
@@ -284,6 +327,14 @@ export function Downloads() {
                 {addMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
                 {isPlaylist ? 'Review' : 'Add'}
               </button>
+              <button onClick={() => fileRef.current?.click()} disabled={uploadProgress !== null} title="Upload a video file"
+                className="flex h-9 shrink-0 items-center gap-1.5 rounded-lg border border-border px-3 text-sm font-medium text-text-muted hover:bg-elevated hover:text-text-primary disabled:opacity-50">
+                {uploadProgress !== null
+                  ? <><Loader2 className="h-4 w-4 animate-spin" /> {uploadProgress}%</>
+                  : <><Upload className="h-4 w-4" /> <span className="hidden sm:inline">Upload</span></>}
+              </button>
+              <input ref={fileRef} type="file" accept="video/*,.mkv,.avi,.flv,.wmv,.m2ts,.ts" className="hidden"
+                onChange={e => { const f = e.target.files?.[0]; if (f) uploadFile(f); }} />
             </div>
           </div>
 
@@ -292,6 +343,19 @@ export function Downloads() {
             <input type="checkbox" checked={isPlaylist} onChange={e => setIsPlaylist(e.target.checked)}
               className="h-4 w-4 rounded border-border accent-accent" />
             This is a playlist (review &amp; pick videos before adding)
+          </label>
+
+          {/* Minimum length — shorter videos are skipped before any media downloads */}
+          <label className="flex w-fit flex-wrap items-center gap-2 text-xs text-text-muted">
+            Skip videos shorter than
+            <input type="number" min={0} step={1} inputMode="numeric" value={minDuration}
+              onChange={e => setMinDuration(e.target.value)}
+              onBlur={saveMinDuration}
+              onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+              disabled={!dlSettings || minDurationMutation.isPending}
+              className="w-16 rounded-md border border-border bg-surface px-2 py-1 text-center text-xs text-text-primary focus:outline-none focus:ring-2 focus:ring-accent" />
+            minutes
+            <span className="text-text-subtle">(0 keeps everything · YouTube is never skipped)</span>
           </label>
 
           {newFolderOpen && (
@@ -364,7 +428,7 @@ export function Downloads() {
               {/* Playlist groups — each its own section with group controls */}
               {groups.map(g => {
                 const ids = g.jobs.map(j => j.id);
-                const done = g.jobs.filter(j => j.status === 'done').length;
+                const failed = g.jobs.filter(j => j.status === 'error').length;
                 const active = g.jobs.filter(j => ['starting', 'downloading', 'processing'].includes(j.status)).length;
                 const allSel = ids.every(id => selected.has(id));
                 return (
@@ -378,7 +442,7 @@ export function Downloads() {
                       <ListVideo className="h-4 w-4 shrink-0 text-accent" />
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-sm font-semibold text-text-primary">{g.title}</p>
-                        <p className="text-[11px] text-text-muted">{g.jobs.length} videos · {done} done{active ? ` · ${active} active` : ''}</p>
+                        <p className="text-[11px] text-text-muted">{g.jobs.length} left{active ? ` · ${active} active` : ''}{failed ? ` · ${failed} failed` : ''}</p>
                       </div>
                       <div className="flex shrink-0 items-center gap-0.5">
                         <button onClick={() => groupBulk('pause', ids)} title="Pause playlist" className="flex h-8 w-8 items-center justify-center rounded-lg text-text-muted hover:bg-elevated hover:text-text-primary"><Pause className="h-4 w-4" /></button>

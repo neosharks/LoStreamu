@@ -12,6 +12,7 @@ export interface QueueOptions {
   autoStart?: boolean;                  // begin processing restored items (default true)
   concurrency?: number;                 // active downloads at once (default 1)
   blockCompletedDuplicates?: boolean;   // reject a URL that already completed (default true)
+  removeCompleted?: boolean;            // drop items from the queue once they complete (default false)
   idFactory?: () => string;             // injectable for deterministic tests
 }
 
@@ -45,6 +46,7 @@ export class DownloadQueue extends EventEmitter {
   private readonly persist: boolean;
   private readonly concurrency: number;
   private readonly blockCompletedDuplicates: boolean;
+  private readonly removeCompleted: boolean;
   private readonly newId: () => string;
 
   constructor(opts: QueueOptions) {
@@ -53,12 +55,19 @@ export class DownloadQueue extends EventEmitter {
     this.persist = opts.persist ?? true;
     this.concurrency = Math.max(1, opts.concurrency ?? 1);
     this.blockCompletedDuplicates = opts.blockCompletedDuplicates ?? true;
+    this.removeCompleted = opts.removeCompleted ?? false;
     this.newId = opts.idFactory ?? (() => crypto.randomBytes(8).toString('hex'));
 
     if (this.persist) {
       const { order, items } = loadQueue();
       this.order = order;
-      for (const it of items) this.items.set(it.id, it);
+      for (const it of items) {
+        if (this.removeCompleted && it.state === 'completed') continue;
+        this.items.set(it.id, it);
+      }
+      this.order = this.order.filter(id => this.items.has(id));
+      // Rewrite at once so pruned items and pre-scrub titles leave the disk too.
+      saveQueue(this.order, this.list());
     }
     if ((opts.autoStart ?? true)) this.pump();
   }
@@ -81,17 +90,17 @@ export class DownloadQueue extends EventEmitter {
     if (dup) throw new DuplicateError(this.duplicateMessage(dup.state));
 
     const now = Date.now();
+    // Save with a random filename unless the caller gave an explicit one. The
+    // name is fixed at enqueue so a retry reuses it (yt-dlp --continue works).
+    const filename = input.filename || crypto.randomBytes(8).toString('hex');
     const item: QueueItem = {
       id: this.newId(),
       url: input.url.trim(),
       folder: input.folder,
       destAbs: input.destAbs,
-      // Save with a random filename unless the caller gave an explicit one. The
-      // name is fixed at enqueue so a retry reuses it (yt-dlp --continue works).
-      filename: input.filename || crypto.randomBytes(8).toString('hex'),
+      filename,
       groupId: input.groupId,
-      groupTitle: input.groupTitle,
-      title: input.title || 'Fetching info…',
+      title: filename,
       thumbUrl: input.thumbUrl,
       state: 'queued',
       progress: 0,
@@ -268,8 +277,6 @@ export class DownloadQueue extends EventEmitter {
     try {
       const handle = this.engine.run(item, {
         onPrepared: m => {
-          if (m.title) item.title = m.title;
-          if (m.uploader) item.uploader = m.uploader;
           if (m.thumbUrl) item.thumbUrl = m.thumbUrl;
           this.touch();
         },
@@ -315,6 +322,10 @@ export class DownloadQueue extends EventEmitter {
         item.state = 'failed'; item.error = result.error || 'Download failed';
         item.finishedAt = Date.now();
         break;
+    }
+    if (result.status === 'completed' && this.removeCompleted) {
+      this.items.delete(item.id);
+      this.order = this.order.filter(id => id !== item.id);
     }
     this.commit();
     if (result.status === 'completed') this.emit('completed', item);

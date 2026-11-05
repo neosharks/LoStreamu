@@ -38,7 +38,6 @@ function serialize(item: QueueItem): object {
     id: item.id,
     url: item.url,
     title: item.title,
-    uploader: item.uploader,
     status: mapStatus(item.state),
     progress: item.progress,
     speed: item.speed,
@@ -49,7 +48,6 @@ function serialize(item: QueueItem): object {
     startedAt: item.createdAt,
     queuePos: queuePos(item),
     groupId: item.groupId,
-    groupTitle: item.groupTitle,
   };
 }
 
