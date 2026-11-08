@@ -6,7 +6,7 @@ import assert from 'assert';
 import {
   isYouTubeUrl, ytFilterArgs, ytFormatArgs, availableImpersonateTargets, supportsJsRuntimes,
   ytNetArgs, ytSpeedArgs, ytErrorMessage, parsePlaylistLine, filteredOutMessage, isAlreadyArchived,
-  isImpersonationTlsError, isClientRejected, tryClients, netHint,
+  isImpersonationTlsError, isClientRejected, tryClients, netHint, availableChromeVersions, chromeTarget,
 } from '../src/services/ytdlp';
 
 let passed = 0;
@@ -135,31 +135,41 @@ const NON_YT = [
       chrome: 'ERROR: Failed to perform, curl: (35) ',
       safari: 'ERROR: HTTP Error 403: Forbidden',
     };
-    const { result, client } = await tryClients(
+    const result = await tryClients(
       async c => { tried.push(c); return replies[String(c)]; }, r => r, ['chrome', 'safari', 'edge', null],
     );
     assert.deepEqual(tried, ['chrome', 'safari', 'edge']);
     assert.equal(result, undefined);
-    assert.equal(client, 'edge');
   });
 
   await test('tryClients: a non-client error is final, not retried', async () => {
     const tried: (string | null)[] = [];
-    const { result } = await tryClients(
+    const result = await tryClients(
       async c => { tried.push(c); return 'ERROR: Unsupported URL'; }, r => r, ['chrome', null],
     );
     assert.deepEqual(tried, ['chrome']);
     assert.equal(result, 'ERROR: Unsupported URL');
   });
 
-  await test('tryClients: all rejected → retry with the last client the site answered', async () => {
-    const replies: Record<string, string> = {
-      chrome: 'ERROR: HTTP Error 403: Forbidden',
-      safari: 'ERROR: Failed to perform, curl: (35) ',
-      null: 'ERROR: Failed to perform, curl: (35) ',
-    };
-    const { client } = await tryClients(async c => replies[String(c)], r => r, ['chrome', 'safari', null]);
-    assert.equal(client, 'chrome');
+  await test('tryClients: every client rejected → the last rejection is returned', async () => {
+    const tried: (string | null)[] = [];
+    const result = await tryClients(
+      async c => { tried.push(c); return `ERROR: HTTP Error 403: Forbidden (${c})`; }, r => r, ['chrome-146', null],
+    );
+    assert.deepEqual(tried, ['chrome-146', null]);
+    assert.equal(result, 'ERROR: HTTP Error 403: Forbidden (null)');
+  });
+
+  await test('availableChromeVersions / chromeTarget: pin Chrome to the local browser\'s version', () => {
+    const listing = 'Chrome-131      Macos-14     curl_cffi\nChrome-142      Macos-26     curl_cffi\nChrome-146      Macos-26     curl_cffi\n'
+      + 'Chrome-99       -            curl_cffi (unavailable)\nSafari-18.0     Ios-18.0     curl_cffi\n';
+    const versions = availableChromeVersions(listing);
+    assert.deepEqual(versions, [131, 142, 146]);
+    assert.equal(chromeTarget(versions, 143), 'chrome-142');
+    assert.equal(chromeTarget(versions, 157), 'chrome-146', 'newer browser → newest target');
+    assert.equal(chromeTarget(versions, 120), 'chrome-131', 'older browser → oldest target');
+    assert.equal(chromeTarget(versions, undefined), 'chrome', 'no local browser → yt-dlp picks');
+    assert.equal(chromeTarget([], 142), 'chrome');
   });
 
   await test('netHint: explains a TLS handshake failure', () => {

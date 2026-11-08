@@ -5,6 +5,7 @@ import fs from 'fs';
 import path from 'path';
 import { getProxy, getMinDurationSec, COOKIES_PATH, YT_DLP_LOCAL, DENO_LOCAL } from '../config';
 import { fetchCookiesViaBrowser } from './browserCookies';
+import { clientHintHeaders, localBrowserIdentity } from './browserIdentity';
 import { prepareCookiesFile } from './cookieJar';
 import type { PlaylistEntry, YtDlpVersionInfo } from '../types';
 
@@ -36,6 +37,22 @@ export function availableImpersonateTargets(listing: string): string[] {
   return IMPERSONATE_PREFERENCE.filter(t => usable.some(l => new RegExp(`^${t}\\b`).test(l)));
 }
 
+// The Chrome versions (`Chrome-146` → 146) that listing can impersonate.
+export function availableChromeVersions(listing: string): number[] {
+  return listing.split('\n')
+    .filter(l => !/unavailable/i.test(l))
+    .map(l => Number(l.trim().match(/^chrome-(\d+)\b/i)?.[1]))
+    .filter(v => v > 0);
+}
+
+// The Chrome target closest to the local browser's version, so the TLS
+// fingerprint and the User-Agent it is sent with describe the same Chrome.
+export function chromeTarget(versions: number[], major?: number): string {
+  if (!versions.length || !major) return 'chrome';
+  const best = versions.reduce((a, b) => (Math.abs(b - major) < Math.abs(a - major) ? b : a));
+  return `chrome-${best}`;
+}
+
 // True if this yt-dlp version understands --js-runtimes. Versions are dated
 // (YYYY.MM.DD[.build]), so string order is chronological.
 export function supportsJsRuntimes(version: string): boolean {
@@ -43,7 +60,7 @@ export function supportsJsRuntimes(version: string): boolean {
   return !!m && m[0] >= JS_RUNTIMES_SINCE;
 }
 
-interface YtDlpCaps { bin: string; impersonate: string[]; jsRuntimes: boolean }
+interface YtDlpCaps { bin: string; impersonate: string[]; chromeVersions: number[]; jsRuntimes: boolean }
 let _caps: YtDlpCaps | null = null;
 
 // What the installed yt-dlp can use on this host. Passing a flag it can't honour
@@ -57,6 +74,7 @@ function ytDlpCaps(): YtDlpCaps {
   _caps = {
     bin,
     impersonate: availableImpersonateTargets(r.stdout || ''),
+    chromeVersions: availableChromeVersions(r.stdout || ''),
     jsRuntimes: supportsJsRuntimes(version),
   };
   if (!_caps.impersonate.length) {
@@ -78,30 +96,36 @@ export function isClientRejected(msg: string | undefined): boolean {
 }
 
 // Clients to try in turn when a run is rejected (see isClientRejected): each
-// browser this host can impersonate, then plain yt-dlp (null).
+// browser this host can impersonate, then plain yt-dlp (null). Chrome is pinned
+// to the version closest to the local Chromium, whose identity it presents.
 export function ytClientAttempts(): (string | null)[] {
-  return [...ytDlpCaps().impersonate, null];
+  const caps = ytDlpCaps();
+  const chrome = chromeTarget(caps.chromeVersions, localBrowserIdentity()?.major);
+  return [...caps.impersonate.map(t => (t === 'chrome' ? chrome : t)), null];
+}
+
+// The clients that present the local browser's identity (see ytNetArgs) — the
+// only ones cookies it fetched are valid for, as bot-check clearance is tied to
+// the browser that earned it.
+export function ytBrowserClients(): (string | null)[] {
+  return ytClientAttempts().filter(c => c === null || c.startsWith('chrome'));
 }
 
 // Runs attempt(client) for each of `clients` until one is not rejected (see
 // isClientRejected; errorOf reads a result's error, undefined for success or a
-// final failure). Returns the last result and the client to retry with: the last
-// one the site answered, since a TLS failure means it never saw that client.
+// final failure), and returns the last result.
 export async function tryClients<T>(
   attempt: (client: string | null) => Promise<T>,
   errorOf: (result: T) => string | undefined,
   clients: (string | null)[] = ytClientAttempts(),
-): Promise<{ result: T; client: string | null }> {
-  let answered = clients[0];
+): Promise<T> {
   let result!: T;
   for (const client of clients) {
     result = await attempt(client);
-    const err = errorOf(result);
-    if (!isClientRejected(err)) return { result, client };
-    if (!isImpersonationTlsError(err)) answered = client;
+    if (!isClientRejected(errorOf(result))) break;
     console.log(`[ytdlp] ${client ?? 'plain yt-dlp'} was rejected — trying the next client…`);
   }
-  return { result, client: answered };
+  return result;
 }
 
 export function ytNetArgs(impersonate: string | null = ytClientAttempts()[0]): string[] {
@@ -112,7 +136,15 @@ export function ytNetArgs(impersonate: string | null = ytClientAttempts()[0]): s
   if (proxy) args.push('--proxy', proxy);
   // Impersonate a browser at the TLS + HTTP level — fixes connection-reset-by-peer
   // on sites that fingerprint the TLS handshake (requires curl-cffi on server).
-  if (impersonate && caps.impersonate.includes(impersonate)) args.push('--impersonate', impersonate);
+  const family = impersonate?.split('-')[0];
+  if (impersonate && caps.impersonate.includes(family!)) args.push('--impersonate', impersonate);
+  // Chrome and plain yt-dlp present the local Chromium's own User-Agent and
+  // client hints: the cookies that browser fetches only work for that identity.
+  const id = localBrowserIdentity();
+  if (id && (impersonate === null || family === 'chrome')) {
+    args.push('--user-agent', id.userAgent);
+    for (const [name, value] of Object.entries(clientHintHeaders(id))) args.push('--add-header', `${name}:${value}`);
+  }
   // YouTube needs a JS runtime to solve its player challenges; without one,
   // formats go missing or extraction fails. yt-dlp only finds deno on PATH by
   // default, so also offer the updater's own deno and, when new enough, the
@@ -265,12 +297,15 @@ async function withAgeGateRetry<T>(url: string, fn: (client: string | null) => P
     value => ({ value }),
     (err: unknown) => ({ err: new Error(ytErrorMessage(err)) }),
   );
-  const { result, client } = await tryClients(settle, r => ('err' in r ? r.err.message : undefined));
+  const errorOf = (r: Awaited<ReturnType<typeof settle>>) => ('err' in r ? r.err.message : undefined);
+  const result = await tryClients(settle, errorOf);
   if (!('err' in result)) return result.value;
   if (!isAgeGateError(result.err)) throw result.err;
   console.log(`[ytdlp] age-gate detected for ${url} — launching browser to accept…`);
   await fetchCookiesViaBrowser(url);
-  try { return await fn(client); } catch (retryErr) { throw new Error(ytErrorMessage(retryErr)); }
+  const retry = await tryClients(settle, errorOf, ytBrowserClients());
+  if ('err' in retry) throw retry.err;
+  return retry.value;
 }
 
 // Entries are handed over in batches of this many, or after FLUSH_MS, whichever
@@ -375,14 +410,14 @@ export function streamPlaylistEntries(url: string, hooks: PlaylistStreamHooks): 
   const done = (async () => {
     const settle = (client: string | null) => runOnce(client).then(() => undefined, (err: Error) => err);
     // Retrying after entries went out would list them twice.
-    const { result: err, client } = await tryClients(
-      settle, e => (e && !stopped && count === 0 ? e.message : undefined),
-    );
+    const errorOf = (e: Error | undefined) => (e && !stopped && count === 0 ? e.message : undefined);
+    const err = await tryClients(settle, errorOf);
     if (!err) return count;
     if (stopped || count > 0 || !isAgeGateError(err)) throw err;
     console.log(`[ytdlp] age-gate detected for ${url} — launching browser to accept…`);
     await fetchCookiesViaBrowser(url);
-    if (!stopped) await runOnce(client);
+    const retryErr = await tryClients(settle, errorOf, ytBrowserClients());
+    if (retryErr) throw retryErr;
     return count;
   })();
 

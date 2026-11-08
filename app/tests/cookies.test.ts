@@ -5,7 +5,7 @@ import assert from 'assert';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { mergeCookies, jsonToCookies, prepareCookiesFile, netscapeLine } from '../src/services/cookieJar';
+import { mergeCookies, jsonToCookies, prepareCookiesFile, netscapeLine, parseCookies, domainMatches } from '../src/services/cookieJar';
 
 let passed = 0;
 async function test(name: string, fn: () => Promise<void> | void) {
@@ -51,6 +51,39 @@ const EXISTING = [
   await test('mergeCookies: drops malformed lines yt-dlp would skip anyway', () => {
     const jar = mergeCookies('not a cookie line\n.a.com\tTRUE\t/\n', []);
     assert.equal(entries(jar).length, 0);
+  });
+
+  await test('mergeCookies: drops expired entries, keeps session ones', () => {
+    const jar = mergeCookies(EXISTING
+      + '\n.stale.com\tTRUE\t/\tFALSE\t1000000000\tcf_clearance\tgone'
+      + '\n.session.com\tTRUE\t/\tFALSE\t0\tsid\tkept', []);
+    assert.ok(!jar.includes('cf_clearance\tgone'), 'expired cookie dropped');
+    assert.ok(jar.includes('\tsid\tkept'), 'session cookie (expiry 0) kept');
+  });
+
+  await test('mergeCookies: replaceHost swaps out every cookie that site was sent', () => {
+    const jar = mergeCookies(EXISTING
+      + '\n.www.example.com\tTRUE\t/\tFALSE\t1893456000\tcf_clearance\tstale', [
+      { name: 'cf_clearance', value: 'fresh', domain: '.example.com', expires: 1893456000 },
+    ], 'www.example.com');
+    assert.ok(jar.includes('\tcf_clearance\tfresh'));
+    assert.ok(!jar.includes('\tstale'), 'stale clearance on the host itself removed');
+    assert.ok(!jar.includes('\tage_ok\told'), 'parent-domain cookie the browser dropped stays dropped');
+    assert.ok(jar.includes('\tLOGIN_INFO\tyt-login'), 'other sites untouched');
+  });
+
+  await test('parseCookies: unexpired cookies, optionally only those sent to a host', () => {
+    const all = parseCookies(EXISTING + '\n.stale.com\tTRUE\t/\tFALSE\t1000000000\told\tx');
+    assert.deepEqual(all.map(c => c.name), ['LOGIN_INFO', 'SID', 'age_ok']);
+    assert.deepEqual(all[1], { domain: '.youtube.com', path: '/', secure: true, expires: 1893456000, name: 'SID', value: 'yt-sid' });
+    assert.deepEqual(parseCookies(EXISTING, 'm.youtube.com').map(c => c.name), ['LOGIN_INFO', 'SID']);
+  });
+
+  await test('domainMatches: host and its parents only, never a lookalike', () => {
+    assert.equal(domainMatches('www.example.com', '.example.com'), true);
+    assert.equal(domainMatches('example.com', 'example.com'), true);
+    assert.equal(domainMatches('badexample.com', '.example.com'), false);
+    assert.equal(domainMatches('example.com', '.www.example.com'), false);
   });
 
   await test('netscapeLine: session cookies get a future expiry, domain is dotted', () => {

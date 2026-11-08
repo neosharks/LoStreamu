@@ -4,7 +4,7 @@ import crypto from 'crypto';
 import type { ChildProcess } from 'child_process';
 import {
   ytNetArgs, ytSpeedArgs, ytFilterArgs, ytFormatArgs, isFilteredOut, isAlreadyArchived,
-  filteredOutMessage, spawnDownload, fetchThumbnail, netHint, tryClients,
+  filteredOutMessage, spawnDownload, fetchThumbnail, netHint, tryClients, ytBrowserClients,
 } from '../ytdlp';
 import { getMinDurationSec } from '../../config';
 import { fetchCookiesViaBrowser } from '../browserCookies';
@@ -157,12 +157,15 @@ export class YtDlpEngine implements DownloadEngine {
       if (stopKind) return { status: stopKind === 'pause' ? 'paused' : 'cancelled' };
 
       // Site rejected a client (TLS handshake or 403): try the next one.
-      let { result, client } = await tryClients(
-        runOnce, r => (r.status === 'failed' && !stopKind ? r.error : undefined),
-      );
-      // One age-gate retry: fetch cookies via headless browser, then re-run.
+      const errorOf = (r: EngineResult) => (r.status === 'failed' && !stopKind ? r.error : undefined);
+      let result = await tryClients(runOnce, errorOf);
+      // One age-gate retry: fetch cookies via headless browser, then re-run as
+      // the clients those cookies are valid for.
       if (result.status === 'failed' && !stopKind && /410|403|age.?gate/i.test(result.error || '')) {
-        try { await fetchCookiesViaBrowser(item.url); result = await runOnce(client); } catch { /* keep original result */ }
+        try {
+          await fetchCookiesViaBrowser(item.url);
+          result = await tryClients(runOnce, errorOf, ytBrowserClients());
+        } catch { /* keep original result */ }
       }
       return result;
     })();
