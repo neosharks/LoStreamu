@@ -4,7 +4,7 @@ import crypto from 'crypto';
 import type { ChildProcess } from 'child_process';
 import {
   ytNetArgs, ytSpeedArgs, ytFilterArgs, ytFormatArgs, isFilteredOut, isAlreadyArchived,
-  filteredOutMessage, spawnDownload, fetchThumbnail, netHint, isImpersonationTlsError,
+  filteredOutMessage, spawnDownload, fetchThumbnail, netHint, tryClients,
 } from '../ytdlp';
 import { getMinDurationSec } from '../../config';
 import { fetchCookiesViaBrowser } from '../browserCookies';
@@ -69,7 +69,7 @@ export class YtDlpEngine implements DownloadEngine {
     let stopKind: 'cancel' | 'pause' | null = null;
     let proc: ChildProcess | null = null;
 
-    const runOnce = (impersonate = true): Promise<EngineResult> => new Promise(resolve => {
+    const runOnce = (client: string | null): Promise<EngineResult> => new Promise(resolve => {
       fs.mkdirSync(item.destAbs, { recursive: true });
       const archivePath = path.join(item.destAbs, '.downloaded.txt');
       // Snapshot the archive so a rejected run (broken output) can be rolled back
@@ -86,7 +86,7 @@ export class YtDlpEngine implements DownloadEngine {
       const args = [
         '--newline', '--no-mtime', '--no-warnings', '--continue',
         '--download-archive', archivePath,
-        ...ytNetArgs(impersonate),
+        ...ytNetArgs(client),
         ...ytSpeedArgs(),
         ...ytFilterArgs(item.url, minSec), // skip short videos (YouTube exempt: any length)
         '--no-playlist',
@@ -156,16 +156,13 @@ export class YtDlpEngine implements DownloadEngine {
       } catch { /* non-fatal — the download can still proceed */ }
       if (stopKind) return { status: stopKind === 'pause' ? 'paused' : 'cancelled' };
 
-      let result = await runOnce();
-      // TLS handshake rejected under Chrome impersonation: retry once with plain TLS.
-      let impersonate = true;
-      if (result.status === 'failed' && !stopKind && isImpersonationTlsError(result.error)) {
-        impersonate = false;
-        result = await runOnce(impersonate);
-      }
+      // Site rejected a client (TLS handshake or 403): try the next one.
+      let { result, client } = await tryClients(
+        runOnce, r => (r.status === 'failed' && !stopKind ? r.error : undefined),
+      );
       // One age-gate retry: fetch cookies via headless browser, then re-run.
       if (result.status === 'failed' && !stopKind && /410|403|age.?gate/i.test(result.error || '')) {
-        try { await fetchCookiesViaBrowser(item.url); result = await runOnce(impersonate); } catch { /* keep original result */ }
+        try { await fetchCookiesViaBrowser(item.url); result = await runOnce(client); } catch { /* keep original result */ }
       }
       return result;
     })();

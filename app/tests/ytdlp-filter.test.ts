@@ -4,9 +4,9 @@
    (5 minutes by default, set from the Downloads page). */
 import assert from 'assert';
 import {
-  isYouTubeUrl, ytFilterArgs, ytFormatArgs, hasChromeImpersonation, supportsJsRuntimes,
+  isYouTubeUrl, ytFilterArgs, ytFormatArgs, availableImpersonateTargets, supportsJsRuntimes,
   ytNetArgs, ytSpeedArgs, ytErrorMessage, parsePlaylistLine, filteredOutMessage, isAlreadyArchived,
-  isImpersonationTlsError, netHint,
+  isImpersonationTlsError, isClientRejected, tryClients, netHint,
 } from '../src/services/ytdlp';
 
 let passed = 0;
@@ -84,13 +84,15 @@ const NON_YT = [
     assert.ok(flag('--postprocessor-args').includes('+faststart'), 'faststart applied');
   });
 
-  await test('hasChromeImpersonation: true only when a Chrome target is usable', () => {
+  await test('availableImpersonateTargets: usable browsers, best first', () => {
     const header = '[info] Available impersonate targets\nClient          OS           Source\n--------------------------------------\n';
-    assert.equal(hasChromeImpersonation(header + 'Chrome-136      Macos-15     curl_cffi\nSafari-18.0     Ios-18.0     curl_cffi\n'), true);
+    assert.deepEqual(availableImpersonateTargets(header +
+      'Firefox-135     Macos-14     curl_cffi\nSafari-18.0     Ios-18.0     curl_cffi\nChrome-136      Macos-15     curl_cffi\nTor-14.5        Macos-14     curl_cffi\n'),
+      ['chrome', 'safari', 'firefox']);
     // curl-cffi missing / unsupported version: yt-dlp still lists targets, marked unavailable.
-    assert.equal(hasChromeImpersonation(header + 'Chrome         -            curl_cffi (unavailable)\nSafari         -            curl_cffi (unavailable)\n'), false);
-    assert.equal(hasChromeImpersonation(header + 'Safari-18.0     Ios-18.0     curl_cffi\n'), false);
-    assert.equal(hasChromeImpersonation(''), false);
+    assert.deepEqual(availableImpersonateTargets(header + 'Chrome         -            curl_cffi (unavailable)\nSafari         -            curl_cffi (unavailable)\n'), []);
+    assert.deepEqual(availableImpersonateTargets(header + 'Safari-18.0     Ios-18.0     curl_cffi\n'), ['safari']);
+    assert.deepEqual(availableImpersonateTargets(''), []);
   });
 
   await test('supportsJsRuntimes: only yt-dlp releases that know --js-runtimes', () => {
@@ -116,8 +118,48 @@ const NON_YT = [
     assert.equal(isImpersonationTlsError(undefined), false);
   });
 
-  await test('ytNetArgs: impersonation can be turned off for the plain-TLS retry', () => {
-    assert.ok(!ytNetArgs(false).includes('--impersonate'));
+  await test('ytNetArgs: plain yt-dlp (null client) does not impersonate', () => {
+    assert.ok(!ytNetArgs(null).includes('--impersonate'));
+  });
+
+  await test('isClientRejected: TLS handshake failures and 403s only', () => {
+    assert.equal(isClientRejected('ERROR: [generic] Unable to download webpage: HTTP Error 403: Forbidden'), true);
+    assert.equal(isClientRejected('ERROR: Unable to download webpage: Failed to perform, curl: (35) '), true);
+    assert.equal(isClientRejected('ERROR: Unsupported URL: https://example.com'), false);
+    assert.equal(isClientRejected(undefined), false);
+  });
+
+  await test('tryClients: moves past rejected clients, stops at the first that works', async () => {
+    const tried: (string | null)[] = [];
+    const replies: Record<string, string | undefined> = {
+      chrome: 'ERROR: Failed to perform, curl: (35) ',
+      safari: 'ERROR: HTTP Error 403: Forbidden',
+    };
+    const { result, client } = await tryClients(
+      async c => { tried.push(c); return replies[String(c)]; }, r => r, ['chrome', 'safari', 'edge', null],
+    );
+    assert.deepEqual(tried, ['chrome', 'safari', 'edge']);
+    assert.equal(result, undefined);
+    assert.equal(client, 'edge');
+  });
+
+  await test('tryClients: a non-client error is final, not retried', async () => {
+    const tried: (string | null)[] = [];
+    const { result } = await tryClients(
+      async c => { tried.push(c); return 'ERROR: Unsupported URL'; }, r => r, ['chrome', null],
+    );
+    assert.deepEqual(tried, ['chrome']);
+    assert.equal(result, 'ERROR: Unsupported URL');
+  });
+
+  await test('tryClients: all rejected → retry with the last client the site answered', async () => {
+    const replies: Record<string, string> = {
+      chrome: 'ERROR: HTTP Error 403: Forbidden',
+      safari: 'ERROR: Failed to perform, curl: (35) ',
+      null: 'ERROR: Failed to perform, curl: (35) ',
+    };
+    const { client } = await tryClients(async c => replies[String(c)], r => r, ['chrome', 'safari', null]);
+    assert.equal(client, 'chrome');
   });
 
   await test('netHint: explains a TLS handshake failure', () => {
