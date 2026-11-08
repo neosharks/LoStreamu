@@ -6,6 +6,7 @@ import assert from 'assert';
 import {
   isYouTubeUrl, ytFilterArgs, ytFormatArgs, hasChromeImpersonation, supportsJsRuntimes,
   ytNetArgs, ytSpeedArgs, ytErrorMessage, parsePlaylistLine, filteredOutMessage, isAlreadyArchived,
+  isImpersonationTlsError, netHint,
 } from '../src/services/ytdlp';
 
 let passed = 0;
@@ -105,6 +106,22 @@ const NON_YT = [
     // page pushed big playlists past the probe timeout ("stuck on fetching info").
     assert.ok(ytSpeedArgs().includes('--sleep-requests'));
     assert.ok(!ytNetArgs().includes('--sleep-requests'));
+  });
+
+  await test('isImpersonationTlsError: spots curl-cffi TLS handshake failures only', () => {
+    // The reported error: curl-cffi's impersonated handshake rejected by the site.
+    assert.equal(isImpersonationTlsError('ERROR: [generic] Unable to download webpage: Failed to perform, curl: (35) . See https://curl.se/libcurl/c/libcurl-errors.html first for more details.'), true);
+    assert.equal(isImpersonationTlsError('ERROR: Unable to download webpage: Failed to perform, curl: (28) Operation timed out'), false);
+    assert.equal(isImpersonationTlsError('ERROR: [Errno 104] Connection reset by peer'), false);
+    assert.equal(isImpersonationTlsError(undefined), false);
+  });
+
+  await test('ytNetArgs: impersonation can be turned off for the plain-TLS retry', () => {
+    assert.ok(!ytNetArgs(false).includes('--impersonate'));
+  });
+
+  await test('netHint: explains a TLS handshake failure', () => {
+    assert.match(netHint('ERROR: Unable to download webpage: Failed to perform, curl: (35) '), /TLS handshake failed/);
   });
 
   await test('ytErrorMessage: surfaces yt-dlp\'s ERROR line, not the echoed command', () => {

@@ -59,7 +59,14 @@ function ytDlpCaps(): YtDlpCaps {
   return _caps;
 }
 
-export function ytNetArgs(): string[] {
+// True if yt-dlp failed in curl-cffi's TLS handshake ("Failed to perform,
+// curl: (35) ..."). Some sites and middleboxes reject the impersonated Chrome
+// handshake that plain TLS gets through, so these runs are retried without it.
+export function isImpersonationTlsError(msg: string | undefined): boolean {
+  return /curl: \(35\)/i.test(msg || '');
+}
+
+export function ytNetArgs(impersonate = true): string[] {
   const caps = ytDlpCaps();
   const args: string[] = [];
   if (prepareCookiesFile(COOKIES_PATH)) args.push('--cookies', COOKIES_PATH);
@@ -67,7 +74,7 @@ export function ytNetArgs(): string[] {
   if (proxy) args.push('--proxy', proxy);
   // Impersonate Chrome at the TLS + HTTP level — fixes connection-reset-by-peer
   // on sites that fingerprint the TLS handshake (requires curl-cffi on server).
-  if (caps.impersonate) args.push('--impersonate', 'chrome');
+  if (impersonate && caps.impersonate) args.push('--impersonate', 'chrome');
   // YouTube needs a JS runtime to solve its player challenges; without one,
   // formats go missing or extraction fails. yt-dlp only finds deno on PATH by
   // default, so also offer the updater's own deno and, when new enough, the
@@ -179,6 +186,8 @@ function decodeHtml(s: string): string {
 export function netHint(msg: string): string {
   if (/impersonate target.*not available|missing dependencies required to support/i.test(msg))
     return msg + ' — yt-dlp is missing the curl-cffi dependency. Fix: pip3 install --break-system-packages curl-cffi';
+  if (isImpersonationTlsError(msg))
+    return msg + ' — TLS handshake failed, with and without browser impersonation. Update yt-dlp via the navbar button, or set a proxy in Account → Network settings.';
   if (/HTTP Error 410|410.*Gone/i.test(msg))
     return msg + ' — Site rejected the request (410). Try updating yt-dlp via the navbar button.';
   if (/sign.?in|log.?in required|logged.?in|account credentials|age.?verif|members.?only|premium|private|video.*not available|not available.*country|account required/i.test(msg))
@@ -209,17 +218,25 @@ export function ytErrorMessage(err: unknown): string {
   return lines.find(l => l && !l.startsWith('Command failed:')) || e?.message || String(err);
 }
 
-// Run fn; on age-gate error fetch cookies via browser and retry once.
-async function withAgeGateRetry<T>(url: string, fn: () => Promise<T>): Promise<T> {
+// Run fn; on a TLS handshake error retry once without impersonation, and on an
+// age-gate error fetch cookies via browser and retry once.
+async function withAgeGateRetry<T>(url: string, fn: (impersonate: boolean) => Promise<T>): Promise<T> {
+  let impersonate = true;
+  let readable: Error;
   try {
-    return await fn();
+    return await fn(impersonate);
   } catch (err) {
-    const readable = new Error(ytErrorMessage(err));
-    if (!isAgeGateError(readable)) throw readable;
-    console.log(`[ytdlp] age-gate detected for ${url} — launching browser to accept…`);
-    await fetchCookiesViaBrowser(url);
-    try { return await fn(); } catch (retryErr) { throw new Error(ytErrorMessage(retryErr)); }
+    readable = new Error(ytErrorMessage(err));
   }
+  if (isImpersonationTlsError(readable.message)) {
+    console.log(`[ytdlp] TLS handshake failed for ${url} — retrying without impersonation…`);
+    impersonate = false;
+    try { return await fn(impersonate); } catch (err) { readable = new Error(ytErrorMessage(err)); }
+  }
+  if (!isAgeGateError(readable)) throw readable;
+  console.log(`[ytdlp] age-gate detected for ${url} — launching browser to accept…`);
+  await fetchCookiesViaBrowser(url);
+  try { return await fn(impersonate); } catch (retryErr) { throw new Error(ytErrorMessage(retryErr)); }
 }
 
 // Entries are handed over in batches of this many, or after FLUSH_MS, whichever
@@ -262,9 +279,9 @@ export function streamPlaylistEntries(url: string, hooks: PlaylistStreamHooks): 
   let stopped = false;
   let count = 0;
 
-  const runOnce = () => new Promise<void>((resolve, reject) => {
+  const runOnce = (impersonate: boolean) => new Promise<void>((resolve, reject) => {
     const child = spawn(ytDlpBin(), [
-      '--flat-playlist', '--lazy-playlist', '-j', '--no-warnings', ...ytNetArgs(), normalizeUrl(url),
+      '--flat-playlist', '--lazy-playlist', '-j', '--no-warnings', ...ytNetArgs(impersonate), normalizeUrl(url),
     ], { stdio: ['ignore', 'pipe', 'pipe'] });
     proc = child;
 
@@ -322,14 +339,22 @@ export function streamPlaylistEntries(url: string, hooks: PlaylistStreamHooks): 
   });
 
   const done = (async () => {
+    let impersonate = true;
     try {
-      await runOnce();
+      await runOnce(impersonate);
     } catch (err) {
       // Retrying after entries went out would list them twice.
-      if (stopped || count > 0 || !isAgeGateError(err)) throw err;
+      if (stopped || count > 0) throw err;
+      if (isImpersonationTlsError((err as Error).message)) {
+        console.log(`[ytdlp] TLS handshake failed for ${url} — retrying without impersonation…`);
+        impersonate = false;
+        try { await runOnce(impersonate); return count; } catch (retryErr) { err = retryErr; }
+        if (stopped || count > 0) throw err;
+      }
+      if (!isAgeGateError(err)) throw err;
       console.log(`[ytdlp] age-gate detected for ${url} — launching browser to accept…`);
       await fetchCookiesViaBrowser(url);
-      if (!stopped) await runOnce();
+      if (!stopped) await runOnce(impersonate);
     }
     return count;
   })();
@@ -343,8 +368,8 @@ export function streamPlaylistEntries(url: string, hooks: PlaylistStreamHooks): 
 // Only the thumbnail is kept: the source title never leaves yt-dlp, so the
 // original name appears nowhere — not in the queue, the UI or the saved queue file.
 export async function fetchThumbnail(url: string): Promise<string | undefined> {
-  const run = () => execFileP(ytDlpBin(), [
-    '-J', '--no-playlist', '--no-warnings', ...ytNetArgs(), normalizeUrl(url),
+  const run = (impersonate: boolean) => execFileP(ytDlpBin(), [
+    '-J', '--no-playlist', '--no-warnings', ...ytNetArgs(impersonate), normalizeUrl(url),
   ], { timeout: 30000, maxBuffer: 10 * 1024 * 1024 });
 
   const { stdout } = await withAgeGateRetry(url, run);
